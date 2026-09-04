@@ -1,0 +1,6 @@
+{
+  "scope": "x_2191106_test_age",
+  "scopeId": "5181976a93c34310e59ff2a0ed03d682",
+  "name": "Test_Agent",
+  "tsconfigPath": "./src/server/tsconfig.json"
+}
