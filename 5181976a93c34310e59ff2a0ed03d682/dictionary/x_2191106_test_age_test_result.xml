@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element db_object_id="4c19feb29303c310e59ff2a0ed03d618" label="Test Result" max_length="40" name="x_2191106_test_age_test_result" type="collection">
+        <element label="Test" mandatory="true" max_length="32" name="test" reference="x_2191106_test_age_url_test" reference_cascade_rule="cascade" type="reference"/>
+        <element label="Type of Test" max_length="40" name="test_type" type="choice">
+            <choice>
+                <element inactive_on_update="false" label="Single Page Test" sequence="2" value="page"/>
+                <element inactive_on_update="false" label="Full Site Scan" sequence="1" value="site"/>
+            </choice>
+        </element>
+        <element display="true" label="Issue" max_length="500" name="issue" type="string"/>
+        <element label="How to Fix Reference" max_length="1024" name="fix_reference" type="url"/>
+        <element label="Test URL" max_length="500" name="test_url" type="string"/>
+        <element label="Screenshot" max_length="1024" name="screenshot" type="url"/>
+        <element label="Type of Issue" max_length="40" name="issue_type" type="choice">
+            <choice>
+                <element inactive_on_update="false" label="Error" sequence="1" value="error"/>
+                <element inactive_on_update="false" label="Structure" sequence="6" value="structure"/>
+                <element inactive_on_update="false" label="Contrast" sequence="4" value="contrast"/>
+                <element inactive_on_update="false" label="Warning" sequence="2" value="warning"/>
+                <element inactive_on_update="false" label="ARIA" sequence="5" value="aria"/>
+                <element inactive_on_update="false" label="Notice" sequence="3" value="notice"/>
+                <element inactive_on_update="false" label="Navigation" sequence="7" value="navigation"/>
+            </choice>
+        </element>
+        <element default="moderate" label="Severity" max_length="40" name="severity" type="choice">
+            <choice>
+                <element inactive_on_update="false" label="Serious" sequence="2" value="serious"/>
+                <element inactive_on_update="false" label="Moderate" sequence="3" value="moderate"/>
+                <element inactive_on_update="false" label="Minor" sequence="4" value="minor"/>
+                <element inactive_on_update="false" label="Critical" sequence="1" value="critical"/>
+            </choice>
+        </element>
+        <index name="index">
+            <element name="test"/>
+        </index>
+    </element>
+</database>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element db_object_id="f14f6b2693c74310e59ff2a0ed03d68e" label="Accessibility Test" max_length="40" name="x_2191106_test_age_url_test" type="collection">
+        <element label="Browser" max_length="500" name="browser" type="string"/>
+        <element display="true" label="Name" max_length="200" name="name" type="string"/>
+        <element label="Notes" max_length="40" name="notes" type="multi_two_lines"/>
+        <element label="URL" mandatory="true" max_length="1024" name="url" type="url"/>
+        <element label="Submitted On" max_length="40" name="submitted_on" type="glide_date_time"/>
+        <element default="wcag_2_1_aa" label="WCAG Standard" max_length="40" name="wcag_standard" type="choice">
+            <choice>
+                <element inactive_on_update="false" label="WCAG 2.1 Level A" sequence="4" value="wcag_2_1_a"/>
+                <element inactive_on_update="false" label="WCAG 2.2 Level AAA" sequence="9" value="wcag_2_2_aaa"/>
+                <element inactive_on_update="false" label="WCAG 2.0 Level AAA" sequence="3" value="wcag_2_0_aaa"/>
+                <element inactive_on_update="false" label="WCAG 2.2 Level A" sequence="7" value="wcag_2_2_a"/>
+                <element inactive_on_update="false" label="WCAG 2.2 Level AA" sequence="8" value="wcag_2_2_aa"/>
+                <element inactive_on_update="false" label="WCAG 2.0 Level AA" sequence="2" value="wcag_2_0_aa"/>
+                <element inactive_on_update="false" label="WCAG 2.1 Level AA" sequence="5" value="wcag_2_1_aa"/>
+                <element inactive_on_update="false" label="WCAG 2.0 Level A" sequence="1" value="wcag_2_0_a"/>
+                <element inactive_on_update="false" label="WCAG 2.1 Level AAA" sequence="6" value="wcag_2_1_aaa"/>
+            </choice>
+        </element>
+        <element default="pending" label="Status" max_length="40" name="status" type="choice">
+            <choice>
+                <element inactive_on_update="false" label="Failed" sequence="4" value="failed"/>
+                <element inactive_on_update="false" label="Pending" sequence="1" value="pending"/>
+                <element inactive_on_update="false" label="Completed" sequence="3" value="completed"/>
+                <element inactive_on_update="false" label="In Progress" sequence="2" value="in_progress"/>
+            </choice>
+        </element>
+    </element>
+</database>

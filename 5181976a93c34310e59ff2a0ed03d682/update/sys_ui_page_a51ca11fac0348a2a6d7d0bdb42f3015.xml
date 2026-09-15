@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_ui_page">
+    <sys_ui_page action="INSERT_OR_UPDATE">
+        <category/>
+        <client_script/>
+        <description/>
+        <direct>true</direct>
+        <endpoint>x_2191106_test_age_accessibility.do</endpoint>
+        <html><![CDATA[
+<!-- @fluent-import-html WARNING: This file was imported from the output of a static build. Modifications of any kind are likely to result in unintended behavior. In most cases, you should edit the source file of the HTML imported below. If you are absolutely certain you want to take control of this HTML, you can remove this comment to prevent the SDK from regenerating it. However, you will then be responsible for the management of this HTML in your Fluent file. -->
+<html class="-polaris">
+  <head>
+    <title>Accessibility Test</title>
+    <!-- @sdk:now-ux-globals -->
+    <!-- Resolved from sdk:now-ux-globals tag at NowSDK build time to support earlier Glide releases -->
+    <script>window.NOW = {};
+window.NOW.user = {};
+window.NOW.batch_glide_ajax_requests = false;
+window.NOW.isUsingPolaris = true;
+window.NOW.exclude_dark_theme = "false";
+window.g_ck = "$[gs.getSession().getSessionToken() || gs.getSessionToken()]";</script>
+    <!-- Include ServiceNow's required scripts -->
+    <g:requires name="scripts/doctype/functions_bootstrap14.js"></g:requires>
+    <g:requires name="scripts/lib/prototype.js"></g:requires>
+    <g:requires name="scripts/classes/ajax/GlideURL.js"></g:requires>
+    <g:requires name="scripts/doctype/CustomEventManager.js"></g:requires>
+    <g:requires name="scripts/classes/ajax/GlideAjax.js"></g:requires>
+    <g:requires name="scripts/classes/GlideUser.js"></g:requires>
+    <g2:client_script type="user"></g2:client_script>
+    <link rel="preload" href="/uxasset/set-cache-buster/$[UxFrameworkScriptables.getFlushTimestamp()].js" as="script"></link>
+    <g:requires name="scripts/polaris_theme_refresh_observer.js"></g:requires>
+    <link data-source-id="glide-theme" id="polarisberg_theme_variables" rel="stylesheet" href="/$uxappimmutables.do?sysparm_request_type=ux_theme$[AMP]sysparm_app_sys_id=c86a62e2c7022010099a308dc7c26022$[AMP]uxpcb=$[sn_ui.PolarisUI.getThemeVariableCssCacheKey()]"></link>
+    <script type="module" src="/uxasset/externals/@devsnc/library-uxf/index.jsdbx"></script>
+    <!-- @sdk:now-ux-globals -->
+    <script src="/uxasset/externals/x_2191106_test_age/main.jsdbx?uxpcb=$[UxFrameworkScriptables.getFlushTimestamp()]" type="module"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>]]></html>
+        <name>accessibility</name>
+        <processing_script/>
+        <sys_class_name>sys_ui_page</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:33:12</sys_created_on>
+        <sys_id>a51ca11fac0348a2a6d7d0bdb42f3015</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>accessibility</sys_name>
+        <sys_package display_value="Test_Agent" source="x_2191106_test_age">5181976a93c34310e59ff2a0ed03d682</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Test_Agent">5181976a93c34310e59ff2a0ed03d682</sys_scope>
+        <sys_update_name>sys_ui_page_a51ca11fac0348a2a6d7d0bdb42f3015</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 04:33:12</sys_updated_on>
+    </sys_ui_page>
+    <sn_glider_source_artifact_m2m action="INSERT_OR_UPDATE">
+        <application_file display_value="accessibility">a51ca11fac0348a2a6d7d0bdb42f3015</application_file>
+        <source_artifact display_value="x_2191106_test_age_accessibility.do - BYOUI Files">d8775aacf4fc44aeb50f201384a5842f</source_artifact>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:33:12</sys_created_on>
+        <sys_id>3b31f67791794a589a7620be941b7e27</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 04:33:12</sys_updated_on>
+    </sn_glider_source_artifact_m2m>
+    <sn_glider_source_artifact action="INSERT_OR_UPDATE">
+        <name>x_2191106_test_age_accessibility.do - BYOUI Files</name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:33:12</sys_created_on>
+        <sys_id>d8775aacf4fc44aeb50f201384a5842f</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 04:33:12</sys_updated_on>
+    </sn_glider_source_artifact>
+    <sys_attachment action="INSERT_OR_UPDATE">
+        <average_image_color/>
+        <chunk_size_bytes>933336</chunk_size_bytes>
+        <compressed>true</compressed>
+        <content_type>application/zip</content_type>
+        <file_name>x_2191106_test_age_accessibility.do - BYOUI Files.zip</file_name>
+        <hash>9d69100e323b36c78c005db0cb4332e0be444c6b34c5332212248f0c35f279f6</hash>
+        <image_height/>
+        <image_width/>
+        <size_bytes>7776</size_bytes>
+        <size_compressed>2891</size_compressed>
+        <state/>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:39:56</sys_created_on>
+        <sys_id>56fbeb635d745134779b740a27f85b54</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 04:39:56</sys_updated_on>
+        <table_name>sn_glider_source_artifact</table_name>
+        <table_sys_id>d8775aacf4fc44aeb50f201384a5842f</table_sys_id>
+    </sys_attachment>
+    <sys_attachment_doc action="INSERT_OR_UPDATE">
+        <data>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</data>
+        <length/>
+        <position>0</position>
+        <sys_attachment display_value="x_2191106_test_age_accessibility.do - BYOUI Files.zip" sys_id="56fbeb635d745134779b740a27f85b54">56fbeb635d745134779b740a27f85b54</sys_attachment>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:39:56</sys_created_on>
+        <sys_id>1ec64a26f392842670d6812f5446ce18</sys_id>
+    </sys_attachment_doc>
+</record_update>

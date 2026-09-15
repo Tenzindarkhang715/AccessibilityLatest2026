@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_module">
+    <sys_module action="INSERT_OR_UPDATE">
+        <content><![CDATA[{
+  "name": "x-2191106-test-agent",
+  "version": "1.0.0",
+  "description": "[BUILD AGENT GENERATED]:  The functionality of the Agent is to test Accessibility of Websites",
+  "license": "UNLICENSED",
+  "imports": {
+    "#now:*": "./@types/servicenow/fluent/*/index.js"
+  },
+  "scripts": {
+    "build": "now-sdk build",
+    "deploy": "now-sdk install",
+    "transform": "now-sdk transform",
+    "types": "now-sdk dependencies"
+  },
+  "dependencies": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "@servicenow/react-components": "0.1.8"
+  },
+  "devDependencies": {
+    "@servicenow/sdk": "4.11.2",
+    "@servicenow/glide": "27.0.5",
+    "@types/react": "18.3.12"
+  }
+}]]></content>
+        <external_source>false</external_source>
+        <path>x_2191106_test_age/x-2191106-test-agent/1.0.0/package.json</path>
+        <sys_class_name>sys_module</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:10:57</sys_created_on>
+        <sys_id>a6966aa2fe1e43c88cb9776a51efe7ac</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_2191106_test_age/x-2191106-test-agent/1.0.0/package.json</sys_name>
+        <sys_package display_value="Test_Agent" source="x_2191106_test_age">5181976a93c34310e59ff2a0ed03d682</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Test_Agent">5181976a93c34310e59ff2a0ed03d682</sys_scope>
+        <sys_update_name>sys_module_a6966aa2fe1e43c88cb9776a51efe7ac</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 04:10:57</sys_updated_on>
+    </sys_module>
+</record_update>

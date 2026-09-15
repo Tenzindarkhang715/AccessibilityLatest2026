@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update>
+    <sys_choice action="INSERT_OR_UPDATE" field="test_type" table="x_2191106_test_age_test_result" version="3">
+        <sys_choice_set action="INSERT_OR_UPDATE">
+            <element>test_type</element>
+            <name>x_2191106_test_age_test_result</name>
+            <sys_class_name>sys_choice_set</sys_class_name>
+            <sys_created_by>admin</sys_created_by>
+            <sys_created_on>2026-09-04 18:52:31</sys_created_on>
+            <sys_mod_count>0</sys_mod_count>
+            <sys_name>test_type</sys_name>
+            <sys_package display_value="Test_Agent" source="x_2191106_test_age">5181976a93c34310e59ff2a0ed03d682</sys_package>
+            <sys_policy/>
+            <sys_scope display_value="Test_Agent">5181976a93c34310e59ff2a0ed03d682</sys_scope>
+            <sys_update_name>sys_choice_x_2191106_test_age_test_result_test_type</sys_update_name>
+            <sys_updated_by>admin</sys_updated_by>
+            <sys_updated_on>2026-09-04 18:52:31</sys_updated_on>
+        </sys_choice_set>
+        <sys_choice action="INSERT_OR_UPDATE">
+            <dependent_value/>
+            <element>test_type</element>
+            <hint/>
+            <inactive>false</inactive>
+            <label>Full Site Scan</label>
+            <language>en</language>
+            <name>x_2191106_test_age_test_result</name>
+            <sequence>1</sequence>
+            <synonyms/>
+            <sys_created_by>admin</sys_created_by>
+            <sys_created_on>2026-09-07 14:41:01</sys_created_on>
+            <sys_domain>global</sys_domain>
+            <sys_domain_path>/</sys_domain_path>
+            <sys_mod_count>0</sys_mod_count>
+            <sys_updated_by>admin</sys_updated_by>
+            <sys_updated_on>2026-09-07 14:41:01</sys_updated_on>
+            <value>site</value>
+        </sys_choice>
+        <sys_choice action="INSERT_OR_UPDATE">
+            <dependent_value/>
+            <element>test_type</element>
+            <hint/>
+            <inactive>false</inactive>
+            <label>Single Page Test</label>
+            <language>en</language>
+            <name>x_2191106_test_age_test_result</name>
+            <sequence>2</sequence>
+            <synonyms/>
+            <sys_created_by>admin</sys_created_by>
+            <sys_created_on>2026-09-07 14:41:01</sys_created_on>
+            <sys_domain>global</sys_domain>
+            <sys_domain_path>/</sys_domain_path>
+            <sys_mod_count>0</sys_mod_count>
+            <sys_updated_by>admin</sys_updated_by>
+            <sys_updated_on>2026-09-07 14:41:01</sys_updated_on>
+            <value>page</value>
+        </sys_choice>
+    </sys_choice>
+</record_update>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_module">
+    <sys_module action="INSERT_OR_UPDATE">
+        <content><![CDATA[{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "serialNumber": "urn:uuid:89b713a4-9fb6-4c83-8259-50a13f616ce3",
+  "metadata": {
+    "timestamp": "2026-09-07T14:40:47.969Z",
+    "tools": {
+      "components": [
+        {
+          "type": "library",
+          "name": "sdk-build-plugins",
+          "group": "@servicenow",
+          "version": "4.11.2",
+          "author": "ServiceNow"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "name": "x-2191106-test-agent",
+      "version": "1.0.0",
+      "bom-ref": "pkg:servicenow/x-2191106-test-agent@1.0.0?sys_scope_id=5181976a93c34310e59ff2a0ed03d682",
+      "description": "[BUILD AGENT GENERATED]:  The functionality of the Agent is to test Accessibility of Websites",
+      "licenses": [
+        {
+          "license": {
+            "name": "UNLICENSED"
+          }
+        }
+      ],
+      "purl": "pkg:servicenow/x-2191106-test-agent@1.0.0?sys_scope_id=5181976a93c34310e59ff2a0ed03d682"
+    }
+  },
+  "components": [],
+  "dependencies": [
+    {
+      "ref": "pkg:servicenow/x-2191106-test-agent@1.0.0?sys_scope_id=5181976a93c34310e59ff2a0ed03d682"
+    }
+  ]
+}]]></content>
+        <external_source>false</external_source>
+        <path>x_2191106_test_age/x-2191106-test-agent/1.0.0/bom.json</path>
+        <sys_class_name>sys_module</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-09-04 04:10:57</sys_created_on>
+        <sys_id>c1ff4af18ef8419ea456d4ad48dc9a70</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_2191106_test_age/x-2191106-test-agent/1.0.0/bom.json</sys_name>
+        <sys_package display_value="Test_Agent" source="x_2191106_test_age">5181976a93c34310e59ff2a0ed03d682</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Test_Agent">5181976a93c34310e59ff2a0ed03d682</sys_scope>
+        <sys_update_name>sys_module_c1ff4af18ef8419ea456d4ad48dc9a70</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-09-04 04:10:57</sys_updated_on>
+    </sys_module>
+</record_update>
