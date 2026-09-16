@@ -3,7 +3,10 @@ import "./app.css";
 
 const TABLE_API = "/api/now/table/x_2191106_test_age_url_test";
 const RESULTS_API = "/api/now/table/x_2191106_test_age_test_result";
-const IS_GITHUB_PAGES = window.location.hostname === "tenzindarkhang715.github.io";
+const IS_GITHUB_PAGES =
+  window.location.hostname === "tenzindarkhang715.github.io" ||
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1";
 
 const URL_PATTERN = /^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+/;
 
