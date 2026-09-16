@@ -3,7 +3,7 @@ import { resolve } from "path";
 
 export default defineConfig({
   root: "src/client",
-  base: "/AccesbilityLatest2026/",
+  base: "/AccessibilityLatest2026/",
   build: {
     outDir: "../../dist",
     emptyOutDir: true,
