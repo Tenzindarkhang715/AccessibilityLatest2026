@@ -3,6 +3,7 @@ import "./app.css";
 
 const TABLE_API = "/api/now/table/x_2191106_test_age_url_test";
 const RESULTS_API = "/api/now/table/x_2191106_test_age_test_result";
+const IS_GITHUB_PAGES = window.location.hostname === "tenzindarkhang715.github.io";
 
 const URL_PATTERN = /^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+/;
 
@@ -96,15 +97,28 @@ export default function App() {
 
   const fetchHistory = useCallback(async () => {
     setHistoryLoading(true);
+  
     try {
+      // GitHub Pages Demo Mode
+      if (IS_GITHUB_PAGES) {
+        const savedHistory = JSON.parse(
+          localStorage.getItem("accessibilityTestHistory") || "[]"
+        );
+  
+        setHistory(savedHistory);
+        return;
+      }
+  
+      // Existing ServiceNow behavior
       const token = getCsrfToken();
       const headers: Record<string, string> = { Accept: "application/json" };
       if (token) headers["X-UserToken"] = token;
-
+  
       const resp = await fetch(
         `${TABLE_API}?sysparm_limit=10&sysparm_order_by=-sys_created_on&sysparm_display_value=true`,
         { method: "GET", headers },
       );
+  
       if (resp.ok) {
         const data = await resp.json();
         setHistory(data.result || []);
@@ -149,18 +163,58 @@ export default function App() {
       return;
     }
 
-    /* CSRF token check */
-    const token = getCsrfToken();
-    if (!token) {
-      setError("Security token (g_ck) is missing. Please reload the page and try again.");
-      return;
-    }
-
     setLoading(type);
     setError(null);
 
     const standard = wcagLabel(wcag);
     try {
+      // GitHub Pages Demo Mode
+      if (IS_GITHUB_PAGES) {
+        const demoTest = {
+          sys_id: Date.now().toString(),
+          url: value,
+          name: (type === "site" ? "Site Test - " : "Page Test - ") + value,
+          browser: browsers.join(", "),
+          wcag_standard: wcag,
+          status: "completed",
+          notes:
+            `Test against ${standard}. ` +
+            (type === "site"
+              ? "Full website accessibility test."
+              : "Single page accessibility test.") +
+            ` Browsers: ${browsers.join(", ")}.`,
+          sys_created_on: new Date().toISOString(),
+        };
+    
+        const existingHistory = JSON.parse(
+          localStorage.getItem("accessibilityTestHistory") || "[]"
+        );
+    
+        localStorage.setItem(
+          "accessibilityTestHistory",
+          JSON.stringify([demoTest, ...existingHistory])
+        );
+    
+        const submitData: SubmitResult = { type, value, browsers, wcag };
+        setSubmitted(submitData);
+        setView("success");
+    
+        fetchHistory();
+    
+        transitionTimer.current = setTimeout(() => {
+          setView("results");
+        }, 2000);
+    
+        return;
+      }
+    
+      // Existing ServiceNow behavior
+      const token = getCsrfToken();
+      if (!token) {
+        setError("Security token (g_ck) is missing. Please reload the page and try again.");
+        return;
+      }
+
       const resp = await fetch(TABLE_API, {
         method: "POST",
         headers: {
@@ -182,7 +236,7 @@ export default function App() {
             ` Browsers: ${browsers.join(", ")}.`,
         }),
       });
-
+    
       if (!resp.ok) throw new Error("Failed to submit: " + resp.status);
       const submitData: SubmitResult = { type, value, browsers, wcag };
       setSubmitted(submitData);
@@ -224,46 +278,119 @@ export default function App() {
   const dismissError = () => setError(null);
 
   const handleDeleteTest = async (sysId: string) => {
+    // GitHub Pages Demo Mode
+    if (IS_GITHUB_PAGES) {
+      try {
+        const existingHistory = JSON.parse(
+          localStorage.getItem("accessibilityTestHistory") || "[]"
+        );
+  
+        const updatedHistory = existingHistory.filter(
+          (item: HistoryRecord) => item.sys_id !== sysId
+        );
+  
+        localStorage.setItem(
+          "accessibilityTestHistory",
+          JSON.stringify(updatedHistory)
+        );
+  
+        fetchHistory();
+      } catch {
+        setError("Failed to delete test");
+      }
+  
+      return;
+    }
+  
+    // Existing ServiceNow behavior
     const token = getCsrfToken();
-    if (!token) { setError("Security token missing. Please reload."); return; }
+    if (!token) {
+      setError("Security token missing. Please reload.");
+      return;
+    }
+  
     try {
       const resp = await fetch(`${TABLE_API}/${sysId}`, {
         method: "DELETE",
         headers: { "X-UserToken": token, Accept: "application/json" },
       });
+  
       if (!resp.ok) throw new Error("Delete failed: " + resp.status);
+  
       fetchHistory();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete test");
+      setError(
+        err instanceof Error ? err.message : "Failed to delete test"
+      );
     }
   };
 
   const handleRetestTest = async (record: HistoryRecord) => {
-    const token = getCsrfToken();
-    if (!token) { setError("Security token missing. Please reload."); return; }
+  // GitHub Pages Demo Mode
+  if (IS_GITHUB_PAGES) {
     try {
-      const resp = await fetch(TABLE_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-UserToken": token,
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          url: record.url,
-          name: "Re-Test - " + record.url,
-          browser: record.browser,
-          wcag_standard: record.wcag_standard,
-          status: "pending",
-          notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
-        }),
-      });
-      if (!resp.ok) throw new Error("Re-test failed: " + resp.status);
+      const demoTest = {
+        sys_id: Date.now().toString(),
+        url: record.url,
+        name: "Re-Test - " + record.url,
+        browser: record.browser,
+        wcag_standard: record.wcag_standard,
+        status: "completed",
+        notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
+        sys_created_on: new Date().toISOString(),
+      };
+
+      const existingHistory = JSON.parse(
+        localStorage.getItem("accessibilityTestHistory") || "[]"
+      );
+
+      localStorage.setItem(
+        "accessibilityTestHistory",
+        JSON.stringify([demoTest, ...existingHistory])
+      );
+
       fetchHistory();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to re-test");
+    } catch {
+      setError("Failed to re-test");
     }
-  };
+
+    return;
+  }
+
+  // Existing ServiceNow behavior
+  const token = getCsrfToken();
+  if (!token) {
+    setError("Security token missing. Please reload.");
+    return;
+  }
+
+  try {
+    const resp = await fetch(TABLE_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-UserToken": token,
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        url: record.url,
+        name: "Re-Test - " + record.url,
+        browser: record.browser,
+        wcag_standard: record.wcag_standard,
+        status: "pending",
+        notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
+      }),
+    });
+
+    if (!resp.ok) throw new Error("Re-test failed: " + resp.status);
+
+    fetchHistory();
+  } catch (err: unknown) {
+    setError(
+      err instanceof Error ? err.message : "Failed to re-test"
+    );
+  }
+};
 
   return (
     <div className="app-container">
@@ -608,6 +735,43 @@ function ResultsPanel({ submittedUrl, onBack }: { submittedUrl: string; onBack: 
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchResults = useCallback(async (): Promise<TestResult[]> => {
+    // GitHub Pages Demo Mode: return representative local demo results.
+    // ServiceNow behavior below remains unchanged.
+    if (IS_GITHUB_PAGES) {
+      return [
+        {
+          sys_id: `demo-result-1-${submittedUrl}`,
+          test_url: submittedUrl,
+          test_type: "site",
+          issue: "Images should have alternative text",
+          issue_type: "error",
+          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
+          severity: "high",
+          screenshot: "",
+        },
+        {
+          sys_id: `demo-result-2-${submittedUrl}`,
+          test_url: submittedUrl,
+          test_type: "site",
+          issue: "Form controls should have accessible labels",
+          issue_type: "warning",
+          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/labels-or-instructions.html",
+          severity: "medium",
+          screenshot: "",
+        },
+        {
+          sys_id: `demo-result-3-${submittedUrl}`,
+          test_url: submittedUrl,
+          test_type: "site",
+          issue: "Page should contain a descriptive title",
+          issue_type: "notice",
+          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/page-titled.html",
+          severity: "low",
+          screenshot: "",
+        },
+      ];
+    }
+
     const token = getCsrfToken();
     const headers: Record<string, string> = { Accept: "application/json" };
     if (token) headers["X-UserToken"] = token;
