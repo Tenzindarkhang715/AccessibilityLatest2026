@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
 import { Resolver } from "node:dns/promises";
-import { createPinnedConnector } from "../dist/security/pinned-connection.js";
+import { createPinnedConnector, createPinnedTunnelConnector } from "../dist/security/pinned-connection.js";
 
 class FakeSocket extends EventEmitter {
   destroyed = false;
@@ -184,4 +184,38 @@ test("invalid timeout and synchronous dial failure are safe", async () => {
   const connect = createPinnedConnector({ allowedPorts: [80], resolve: async () => ["8.8.8.8"],
     dialers: { tcp: fail, tls: fail } });
   await assert.rejects(connect("http://example.com", signal()), { code: "CONNECTION_FAILED" });
+});
+
+test("tunnel connector assesses HTTPS authorities but exclusively dials raw TCP", async () => {
+  for (const address of ["8.8.8.8", "2606:4700:4700::1111"]) {
+    let calls = 0;
+    const connect = createPinnedTunnelConnector({ allowedPorts: [443], resolve: async () => [address],
+      dialers: { tls: () => assert.fail("Tunnel must not start TLS"), tcp: options => {
+        calls++; assert.equal(options.host, address); assert.equal(options.port, 443);
+        assert.equal(options.servername, undefined); assert.equal(options.rejectUnauthorized, undefined);
+        assert.throws(() => options.lookup("example.com"), /forbidden/);
+        const socket = new FakeSocket(address); socket.authorized = false;
+        queueMicrotask(() => socket.emit("connect")); return socket;
+      } } });
+    const result = await connect("https://example.com:443", signal());
+    assert.equal(calls, 1); result.socket.destroy();
+    await assert.rejects(connect("http://example.com", signal()), { code: "CONNECTION_FAILED" });
+    await assert.rejects(connect("https://127.0.0.1", signal()), { code: "TARGET_NOT_ALLOWED" });
+    assert.equal(calls, 1);
+  }
+});
+
+test("raw tunnel establishment retains timeout and cancellation cleanup", async () => {
+  for (const cancelled of [false, true]) {
+    const controller = new AbortController(); let socket;
+    const connect = createPinnedTunnelConnector({ allowedPorts: [443], timeoutMs: 10,
+      resolve: async () => ["8.8.8.8"], dialers: { tls: () => assert.fail(), tcp: () => {
+        socket = new FakeSocket("8.8.8.8");
+        if (cancelled) queueMicrotask(() => controller.abort());
+        return socket;
+      } } });
+    await assert.rejects(connect("https://example.com", controller.signal),
+      { code: cancelled ? "CANCELLED" : "CONNECTION_TIMEOUT" });
+    assert.equal(socket.destroyed, true);
+  }
 });

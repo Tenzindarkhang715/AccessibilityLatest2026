@@ -27,11 +27,28 @@ export interface PinnedConnection {
 /** Opens a socket only; no HTTP request, redirects, proxy or browser integration.
  * Each call reassesses the target. No caller-supplied assessment is trusted.
  */
-export function createPinnedConnector(options: Omit<TargetPolicyOptions, "resolve"> & {
+export type PinnedConnectorOptions = Omit<TargetPolicyOptions, "resolve"> & {
   resolve?: TargetPolicyOptions["resolve"];
   timeoutMs?: number;
   dialers?: ConnectionDialers;
-}) {
+};
+
+export function createPinnedConnector(options: PinnedConnectorOptions) {
+  return connector(options, false);
+}
+
+/** Raw TCP for an assessed HTTPS authority. TLS belongs to the tunnel client.
+ * This is a separate trusted composition API, never a request-controlled flag.
+ */
+export function createPinnedTunnelConnector(options: PinnedConnectorOptions) {
+  const connect = connector(options, true);
+  return (url: string, signal: AbortSignal) => {
+    if (!/^https:\/\//i.test(url)) return Promise.reject(new PinnedConnectionError("CONNECTION_FAILED"));
+    return connect(url, signal);
+  };
+}
+
+function connector(options: PinnedConnectorOptions, tunnel: boolean) {
   const policy = createTargetPolicy({ ...options, resolve: options.resolve ?? createTargetResolver() });
   const timeoutMs = options.timeoutMs ?? 10_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
@@ -59,7 +76,7 @@ export function createPinnedConnector(options: Omit<TargetPolicyOptions, "resolv
       const connectOptions: NetConnectOpts = { host: address, port: assessment.port,
         family: net.isIP(address), autoSelectFamily: false,
         lookup: () => { throw new Error("Hostname lookup forbidden for pinned connection."); } };
-      const secured = protocol === "https:";
+      const secured = protocol === "https:" && !tunnel;
       socket = secured ? dialers.tls({ ...connectOptions,
         servername: net.isIP(assessment.hostname) ? undefined : assessment.hostname,
         rejectUnauthorized: true,

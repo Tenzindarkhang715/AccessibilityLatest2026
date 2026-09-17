@@ -87,6 +87,8 @@ node --test test/api.test.mjs
 node --test test/address-policy.test.mjs test/target-policy.test.mjs
 node --test test/scanner.test.mjs
 node --test test/target-resolver.test.mjs test/pinned-connection.test.mjs
+node --test test/egress-proxy.test.mjs
+node --test test/*.test.mjs
 ```
 
 Tests start and stop isolated loopback servers. Existing-run checks insert marked
@@ -169,8 +171,8 @@ deployment-specific egress exclusions too.
 
 Redirect hop limits, crawl boundaries, concrete production ports, resource limits,
 browser integration, production hosting and the other deferred scanner decisions
-remain open. No redirect or DNS-rebinding protection is claimed for live traffic:
-there is no live scanning traffic, and these connection controls are not built.
+remain open at the scanner/deployment level. The component controls described
+below do not enable live scanning or provide browser-wide enforcement.
 
 Tests inject fixed resolver answers and manually controlled cancellation. They
 exercise allowed/prohibited IPv4/IPv6, URL normalization, credentials, hostnames,
@@ -245,9 +247,10 @@ zero-violation document, tag filtering, rejected capabilities/targets, real engi
 failure, fixture-load failure, cancellation, timeout and page/context/process
 cleanup. Existing security and HTTP API tests remain unchanged.
 
-Live DNS rebinding, actual upstream connection pinning, browser egress bypass,
-and redirects/subresources/frames/script traffic over uncontrolled connections
-remain unsolved. A network-isolated worker and controlled egress must be designed
+Browser-wide DNS rebinding, browser egress bypass, and redirects/subresources/
+frames/script traffic over uncontrolled connections remain unsolved. The pinned
+connector and proxy below protect only their own connections. A network-isolated
+worker and controlled egress must be designed
 and verified before introducing a live transport or enabling normal API scans.
 Synthetic fixture sources must never be selected from HTTP input or treated as
 a production navigation bypass.
@@ -300,13 +303,14 @@ is cleared, but caller cancellation still destroys the socket until it closes.
 The caller owns subsequent I/O, error handling, session timeout and final close.
 Safe errors do not expose resolver, certificate or connection details.
 
-This code opens sockets only when explicitly invoked; nothing imports it into
-the running API or scanner. It sends no HTTP request, follows no redirects, runs
-no listener, implements no CONNECT proxy, and enables no browser navigation.
+This connector opens sockets only when explicitly invoked; nothing imports it
+into the running API or scanner. It sends no HTTP request, follows no redirects,
+runs no listener, and enables no browser navigation.
 There is no browser-wide rebinding protection, egress firewall, worker isolation,
 deployment-specific routing guarantee or redirect enforcement. TLS is performed
-by this direct connector, not Chromium; a future opaque CONNECT proxy would need
-an explicitly reviewed raw-tunnel composition instead of double TLS.
+by this direct connector, not Chromium. The separate createPinnedTunnelConnector
+now supplies raw TCP for assessed HTTPS authorities; it retains the same address,
+pinning, peer, timeout and cancellation checks without starting target TLS.
 
 Tests use injected DNS/socket/TLS seams and stub Node's default entry points;
 they contact no target or external DNS service. They check complete IPv4/IPv6
@@ -319,5 +323,86 @@ certification. Existing fixture scanner, security and API suites remain intact.
 
 POST /api/tests and existing-source Re-Test remain SCANNER_UNAVAILABLE, without
 allocating run IDs or creating scan history/jobs/findings. Live URL scanning must
-remain disabled until the separately reviewed proxy and enforced egress/isolation
-boundary is implemented and validated.
+remain disabled until the enforced egress/isolation boundary and browser
+integration are implemented and validated.
+
+## Validating egress proxy component (not activated)
+
+`src/security/egress-proxy.ts` exports createEgressProxy: a programmatic HTTP/1.1
+listener bound only to 127.0.0.1. Importing it starts nothing. There is no main
+entry point, npm startup command, API/worker wiring or Chromium proxy setting.
+Trusted composition supplies a high-entropy 32–128 character base64url secret.
+Every request requires Basic proxy credentials with username `proxy`; comparison
+uses constant-time SHA-256 digests. Credentials never enter upstream headers or
+error bodies. Loopback binding alone is not authorization. This local transport
+and credential scheme is not a production worker/network identity boundary.
+
+Ordinary forwarding accepts only GET/HEAD absolute-form `http:` URLs on port 80,
+without a request body (Content-Length: 0 is accepted). CONNECT requires a host
+and explicit port 443, including bracketed IPv6 syntax. Canonical Host must match
+the target. Both paths use the unchanged target/address policy, complete A/AAAA
+assessment and a pinned literal-IP connector. Prohibited or mixed answer sets,
+empty answers and resolver failures cannot dial. Each new request reassesses;
+there is no upstream pool, global-agent fallback, environment-proxy fallback,
+second hostname lookup or retry to an unassessed address.
+
+CONNECT returns 200 only after the raw TCP connection succeeds. It does not
+start TLS, terminate TLS, MITM, verify certificates, inspect SNI, or verify an
+HTTP Host inside the tunnel. A future Chromium client must own end-to-end TLS
+and certificate/hostname verification. The existing direct HTTPS connector's
+verification remains enabled and unchanged. A tunnel carries opaque bytes to
+one assessed endpoint; it cannot police application destinations or upstream
+proxy services behind that endpoint.
+
+HTTP redirects are returned unchanged and never followed internally. A new
+HTTP request or CONNECT receives fresh assessment, including changed DNS on the
+same hostname. HTTPS redirects and same-tunnel requests are encrypted and not
+visible here. The proxy cannot enforce encrypted redirect hops, crawl scope,
+hostname coalescing or same-tunnel HTTP authority. Explicit ws:/wss: requests,
+plaintext Upgrade and upstream protocol switching are rejected. Encrypted WSS
+inside CONNECT cannot be detected or blocked by this component.
+
+Node's strict HTTP parser is used, with raw-header checks before dialing.
+Duplicate/missing/conflicting Host, malformed/duplicate Content-Length,
+Transfer-Encoding, request trailers, Upgrade, Expect, invalid authorities/ports,
+unsupported methods/forms and ambiguous framing fail closed. Connection header
+nominations of critical framing/authentication fields are rejected. Forwarding
+reconstructs origin-form and canonical Host, strips hop-by-hop/proxy and forwarded
+identity headers, validates response framing and permits one request per client
+connection. Explicit proxy-chaining request forms are unsupported. This cannot
+prevent a permitted public endpoint from itself acting as a relay.
+
+Initial component defaults (not finalized production scan budgets):
+
+| Resource | Limit |
+| --- | --- |
+| Request/response headers | 16 KiB, 100 fields |
+| Concurrent clients | 16 total, 8 per source address, including unauthenticated |
+| Request headers | 5 seconds |
+| DNS | Existing resolver's 5 seconds |
+| Assessment plus connection establishment | 10 seconds |
+| Idle connection | 10 seconds |
+| Total request/tunnel lifetime | 60 seconds |
+| HTTP response body | 16 MiB |
+| Tunnel transfer | 16 MiB in each direction |
+| Initial CONNECT head | 16 KiB, included in tunnel byte count |
+| Tunnel half-close grace | 2 seconds |
+
+Trusted callers may configure component limits; invalid values reject startup.
+Failures return bounded generic errors before forwarding starts, or close an
+active transfer. Shutdown, disconnect, timeout, cancellation and upstream failure
+abort owned resolution/connections, destroy streams/sockets and clear timers.
+Shutdown waits for owned client sockets to close. Backpressure is preserved.
+
+Tests use real loopback clients with injected deterministic DNS and in-memory
+upstreams; public-looking IPs are assessed but never contacted. Tests cover
+HTTP/CONNECT, IPv4/IPv6, raw TCP ownership, parser/auth/policy rejection before
+dialing, redirect reassessment, pinning, resource limits and cleanup. Existing
+scanner tests remain fixture-only and are not connected to this proxy.
+
+This is not browser-wide SSRF protection: there is no firewall/container/worker
+isolation, direct-egress denial, UDP/QUIC/WebRTC/DNS bypass prevention, deployment
+routing exclusion, or compromised-worker containment. Those boundaries and
+browser integration remain required before live navigation. POST /api/tests
+remains 503 SCANNER_UNAVAILABLE; existing Re-Test behavior is unchanged, with
+no IDs, jobs, history or findings created by scan submission.
