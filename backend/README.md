@@ -86,6 +86,7 @@ npm run build
 node --test test/api.test.mjs
 node --test test/address-policy.test.mjs test/target-policy.test.mjs
 node --test test/scanner.test.mjs
+node --test test/target-resolver.test.mjs test/pinned-connection.test.mjs
 ```
 
 Tests start and stop isolated loopback servers. Existing-run checks insert marked
@@ -152,7 +153,8 @@ and does not close the DNS rebinding/validation-to-connection race.
 A future trusted resolver must supply all A/AAAA answers through aliases, reject
 partial failures, avoid search-domain expansion, and honor cancellation. These
 resolver obligations cannot be verified by inspecting an answer array alone.
-No production resolver is supplied in this increment.
+The resolver/connection foundation below now supplies a concrete resolver; it is
+not connected to the API or browser adapter.
 
 Before enabling scanning, an isolated worker and controlled egress must validate
 and pin the actual upstream connection to an assessed address, preserve hostname
@@ -249,3 +251,73 @@ remain unsolved. A network-isolated worker and controlled egress must be designe
 and verified before introducing a live transport or enabling normal API scans.
 Synthetic fixture sources must never be selected from HTTP input or treated as
 a production navigation bypass.
+
+## Resolver and pinned-connection foundation (not activated)
+
+`src/security/target-resolver.ts` supplies a real Node DNS implementation by
+default and accepts a trusted resolver factory for deterministic tests. Each
+assessment gets an independent resolver, queries both A and AAAA records with
+an absolute DNS name, and returns all answers. Node's DNS resolver follows DNS
+aliases; no OS hosts-file/search-domain fallback is used. ENODATA is accepted
+as absence of one family; other errors, malformed/wrong-family answers and an
+empty combined result fail closed. A separate total deadline bounds resolution,
+and cancellation cancels this resolver without affecting other assessments.
+
+`src/security/pinned-connection.ts` exposes createPinnedConnector. Its default
+composition uses that resolver, the unchanged target/address policy, and Node
+TCP/TLS sockets. Explicit allowed ports are still required from trusted
+configuration. Resolver and dialer injection are infrastructure/test seams, not
+HTTP request options; there is no private-address bypass.
+
+Every call performs a new complete target assessment. A prohibited address in
+either family rejects the whole set. The connector selects the first allowed
+address only after all answers pass; it neither filters out prohibited answers
+nor retries another address after connection failure. Both public IPv4 and IPv6
+are supported. Literal URL targets are assessed directly without DNS.
+
+The socket receives the assessed literal address as host and its explicit family.
+Automatic family selection is disabled and a lookup guard rejects any unexpected
+hostname lookup. The connected peer must match the assessed address. IPv4-mapped
+peer formatting is normalized for comparison only; mapped URL/DNS targets remain
+prohibited. This closes the second-resolution/rebinding race for this specific
+connection primitive, assuming trustworthy resolver/dialer implementations and
+network routing. It does not make a hostname permanently trusted: later calls
+resolve and reassess again, and existing sockets retain their original endpoint.
+
+HTTPS establishes TLS directly to the assessed IP. DNS targets retain their
+canonical original hostname as SNI. IP targets omit DNS SNI and require a matching
+IP certificate SAN. rejectUnauthorized is explicitly true; the normal Node trust
+chain validation remains enabled. checkServerIdentity verifies the original
+hostname/IP rather than replacing it with the selected DNS address. The connector
+also checks TLS authorization and peer identity before handing off the socket.
+It supplies no custom CA, permissive verifier or certificate-error bypass.
+
+The default resolver deadline is 5 seconds; the connector's 10-second default
+covers assessment plus TCP/TLS establishment. Both are configurable primitive
+defaults, not finalized production scan budgets. Timeout/cancellation fails
+closed and destroys any pending socket. After handoff the establishment timer
+is cleared, but caller cancellation still destroys the socket until it closes.
+The caller owns subsequent I/O, error handling, session timeout and final close.
+Safe errors do not expose resolver, certificate or connection details.
+
+This code opens sockets only when explicitly invoked; nothing imports it into
+the running API or scanner. It sends no HTTP request, follows no redirects, runs
+no listener, implements no CONNECT proxy, and enables no browser navigation.
+There is no browser-wide rebinding protection, egress firewall, worker isolation,
+deployment-specific routing guarantee or redirect enforcement. TLS is performed
+by this direct connector, not Chromium; a future opaque CONNECT proxy would need
+an explicitly reviewed raw-tunnel composition instead of double TLS.
+
+Tests use injected DNS/socket/TLS seams and stub Node's default entry points;
+they contact no target or external DNS service. They check complete IPv4/IPv6
+assessments, mixed-answer rejection, changed answers, literal dialing without
+re-resolution, safe failures, timeout/cancellation, peer mismatch, and original
+hostname/IP certificate verification using Node's real identity checker. TLS
+handshake/trust-chain behavior is delegated to Node with verification enabled;
+these deterministic seam tests are not a live TLS handshake or network-isolation
+certification. Existing fixture scanner, security and API suites remain intact.
+
+POST /api/tests and existing-source Re-Test remain SCANNER_UNAVAILABLE, without
+allocating run IDs or creating scan history/jobs/findings. Live URL scanning must
+remain disabled until the separately reviewed proxy and enforced egress/isolation
+boundary is implemented and validated.
