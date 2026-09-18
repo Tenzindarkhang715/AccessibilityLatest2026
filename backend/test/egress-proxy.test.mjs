@@ -299,3 +299,32 @@ test("startup requires valid credentials/limits and has no implicit listener", a
   assert.deepEqual(proxy.diagnostics(), { clients: 0, timers: 0, upstreams: 0 });
   await assert.rejects(proxy.listen(-1)); await proxy.close(); await assert.rejects(proxy.listen());
 });
+
+test("default and explicit trusted loopback binding preserve authentication", async t => {
+  for (const options of [{}, { bindAddress: "127.0.0.1" }]) {
+    const proxy = createEgressProxy({ secret, ...options });
+    t.after(() => proxy.close());
+    const port = await proxy.listen();
+    status(await exchange(port, "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"), 407);
+    await proxy.close();
+  }
+});
+test("unsafe trusted bind configuration rejects before startup", () => {
+  for (const bindAddress of [null, "", "0.0.0.0", "::", "::1", "localhost", "127.1", "8.8.8.8",
+    "169.254.1.1", "224.0.0.1", "255.255.255.255", "10.0.0.1:3128", " 10.0.0.1", "10.00.0.1"]) {
+    assert.throws(() => createEgressProxy({ secret, bindAddress }));
+  }
+});
+
+test("explicit private bind is passed unchanged with no wildcard or fallback on failure", async t => {
+  const { Server } = await import("node:http");
+  let calls = 0;
+  t.mock.method(Server.prototype, "listen", function (port, address) {
+    calls++; assert.equal(port, 3128); assert.equal(address, "10.77.0.1");
+    queueMicrotask(() => this.emit("error", new Error("unavailable test interface")));
+    return this;
+  });
+  const proxy = createEgressProxy({ secret, bindAddress: "10.77.0.1" });
+  await assert.rejects(proxy.listen(3128), /startup failed/);
+  assert.equal(calls, 1); await proxy.close();
+});

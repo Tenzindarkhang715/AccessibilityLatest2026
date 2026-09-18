@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { Socket } from "node:net";
+import { isIP, type Socket } from "node:net";
 import { Transform } from "node:stream";
 import { createPinnedConnector, createPinnedTunnelConnector, type ConnectionDialers } from "./pinned-connection.js";
 import type { TargetResolver } from "./target-policy.js";
@@ -60,12 +60,25 @@ function authority(raw: string, scheme: "http:" | "https:", requirePort: boolean
  */
 export function createEgressProxy(options: {
   secret: string;
+  // Trusted runtime composition only; never populated from a proxy request.
+  bindAddress?: string;
   resolve?: TargetResolver;
   dialers?: ConnectionDialers;
   deniedHostnames?: readonly string[];
   limits?: Partial<Limits>;
 }) {
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(options.secret)) throw new Error("A 32–128 character proxy secret is required.");
+  const bindAddress = options.bindAddress === undefined ? "127.0.0.1" : options.bindAddress;
+  // Initial namespace transport is IPv4-only. No wildcard, hostname, or URL repairs.
+  if (typeof bindAddress !== "string" || isIP(bindAddress) !== 4
+      || bindAddress.startsWith("0.") || bindAddress.startsWith("169.254.")
+      || Number(bindAddress.split(".")[0]) >= 224
+      || (options.bindAddress !== undefined && bindAddress !== "127.0.0.1"
+        && !(bindAddress.startsWith("10.") || bindAddress.startsWith("192.168.")
+          || (bindAddress.startsWith("172.") && Number(bindAddress.split(".")[1]) >= 16
+            && Number(bindAddress.split(".")[1]) <= 31)))) {
+    throw new Error("Invalid trusted proxy bind address.");
+  }
   const limits: Limits = { ...PROXY_LIMITS, ...options.limits };
   for (const value of Object.values(limits)) {
     if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) throw new Error("Invalid proxy limits.");
@@ -259,7 +272,7 @@ export function createEgressProxy(options: {
         const failed = () => { server.removeListener("listening", ready); rejectStart(new Error("Proxy startup failed.")); };
         const ready = () => { server.removeListener("error", failed); resolve((server.address() as { port: number }).port); };
         server.once("error", failed); server.once("listening", ready);
-        server.listen(port, "127.0.0.1");
+        server.listen(port, bindAddress);
       });
     },
     async close(): Promise<void> {

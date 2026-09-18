@@ -406,3 +406,26 @@ routing exclusion, or compromised-worker containment. Those boundaries and
 browser integration remain required before live navigation. POST /api/tests
 remains 503 SCANNER_UNAVAILABLE; existing Re-Test behavior is unchanged, with
 no IDs, jobs, history or findings created by scan submission.
+
+## Portable Linux network-policy preparation (not enforced)
+
+`infra/scanner/network-policy.mjs` validates explicit trusted IPv4-only runtime
+configuration and renders separate default-deny worker/proxy nftables rulesets.
+It performs no DNS, socket, subprocess or filesystem operations, and applies no
+firewall. See `infra/scanner/README.md` for required fields, exceptions, limitations
+and future Linux acceptance requirements. Run its portable tests after building:
+
+```sh
+node --test test/scanner-network-policy.test.mjs
+```
+
+The proxy's trusted `bindAddress` option defaults to `127.0.0.1`. Explicit canonical
+RFC1918 addresses are supported for a future dedicated namespace interface;
+wildcard, hostname, public, link-local and IPv6 binding are rejected. Listener
+failure never falls back to another address. Authentication and existing security
+checks are unchanged. Neither config nor binding is controlled by HTTP requests.
+
+No Linux isolation or browser-wide SSRF protection exists in this increment.
+Chromium remains disconnected from the proxy, the fixture scanner is unchanged,
+and valid API submissions still return 503 SCANNER_UNAVAILABLE with no run ID,
+history, job or findings. No package or runtime launcher was added.
