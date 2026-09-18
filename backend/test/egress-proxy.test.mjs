@@ -328,3 +328,90 @@ test("explicit private bind is passed unchanged with no wildcard or fallback on 
   await assert.rejects(proxy.listen(3128), /startup failed/);
   assert.equal(calls, 1); await proxy.close();
 });
+
+async function assertNotListening(port) {
+  const socket = net.connect({ host: "127.0.0.1", port });
+  try {
+    await new Promise((resolve, reject) => {
+      socket.once("connect", () => reject(new Error("Listener remained reachable")));
+      socket.once("error", error => error.code === "ECONNREFUSED" ? resolve() : reject(error));
+    });
+  } finally { socket.destroy(); }
+}
+
+test("normal listen then close releases listener and repeated listen rejects", async t => {
+  const proxy = createEgressProxy({ secret }); t.after(() => proxy.close());
+  const port = await proxy.listen();
+  await assert.rejects(proxy.listen(), /Invalid proxy startup/);
+  await proxy.close(); await assertNotListening(port);
+  assert.deepEqual(proxy.diagnostics(), { clients: 0, timers: 0, upstreams: 0 });
+});
+
+test("original immediate listen/close race leaves no reachable listener", async t => {
+  const proxy = createEgressProxy({ secret }); t.after(() => proxy.close());
+  const starting = proxy.listen();
+  await proxy.close();
+  const port = await starting;
+  await assertNotListening(port);
+  await proxy.close(); await assert.rejects(proxy.listen());
+});
+
+test("controlled pending startup blocks shutdown completion and concurrent listen", async t => {
+  const { Server } = await import("node:http");
+  const original = Server.prototype.listen;
+  let release; let calls = 0;
+  t.mock.method(Server.prototype, "listen", function (...args) {
+    calls++; release = () => original.apply(this, args); return this;
+  });
+  const proxy = createEgressProxy({ secret }); t.after(() => proxy.close());
+  const starting = proxy.listen();
+  await assert.rejects(proxy.listen(), /Invalid proxy startup/);
+  const closing = proxy.close();
+  assert.equal(proxy.close(), closing);
+  let settled = false; closing.then(() => { settled = true; });
+  await Promise.resolve(); assert.equal(settled, false);
+  release();
+  const port = await starting; await closing;
+  assert.equal(calls, 1); await assertNotListening(port);
+  assert.equal(proxy.close(), closing);
+});
+
+test("close before startup is idempotent and permanently prevents listening", async () => {
+  const proxy = createEgressProxy({ secret });
+  const closed = proxy.close(); assert.equal(proxy.close(), closed);
+  await closed; await assert.rejects(proxy.listen(), /Invalid proxy startup/);
+  assert.equal(proxy.close(), closed);
+});
+
+for (const synchronous of [false, true]) {
+  test(`startup ${synchronous ? "throw" : "error event"} releases lifecycle state and shutdown completes`, async t => {
+    const { Server } = await import("node:http");
+    const original = Server.prototype.listen; let server; let attempts = 0;
+    t.mock.method(Server.prototype, "listen", function (...args) {
+      server = this;
+      if (++attempts > 1) return original.apply(this, args);
+      if (synchronous) throw new Error("controlled startup failure");
+      queueMicrotask(() => this.emit("error", new Error("controlled startup failure")));
+      return this;
+    });
+    const proxy = createEgressProxy({ secret }); t.after(() => proxy.close());
+    await assert.rejects(proxy.listen(), /Proxy startup failed/);
+    assert.deepEqual(server.listeners("listening"), new Server().listeners("listening"));
+    assert.equal(server.listenerCount("error"), 0);
+    const port = await proxy.listen(); await proxy.close(); await assertNotListening(port);
+  });
+}
+
+test("shutdown waits for controlled startup failure then completes without a listener", async t => {
+  const { Server } = await import("node:http"); let server;
+  t.mock.method(Server.prototype, "listen", function () { server = this; return this; });
+  const proxy = createEgressProxy({ secret });
+  const failed = assert.rejects(proxy.listen(), /Proxy startup failed/);
+  const closing = proxy.close();
+  server.emit("error", new Error("controlled failure"));
+  await failed; await closing;
+  assert.equal(server.listening, false);
+  assert.deepEqual(server.listeners("listening"), new Server().listeners("listening"));
+  assert.equal(server.listenerCount("error"), 0);
+  await proxy.close();
+});

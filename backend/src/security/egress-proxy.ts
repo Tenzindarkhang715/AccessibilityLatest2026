@@ -92,6 +92,8 @@ export function createEgressProxy(options: {
   const counts = new Map<string, number>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let stopping = false;
+  let startup: Promise<number> | undefined;
+  let shutdown: Promise<void> | undefined;
   type State = { controller: AbortController; started: boolean; handled: boolean; ended: boolean;
     upstream?: Socket; response?: ServerResponse; agent?: http.Agent;
     headerTimer: ReturnType<typeof setTimeout>; lifeTimer: ReturnType<typeof setTimeout>;
@@ -267,22 +269,39 @@ export function createEgressProxy(options: {
 
   return Object.freeze({
     async listen(port = 0): Promise<number> {
-      if (!Number.isInteger(port) || port < 0 || port > 65535 || stopping || server.listening) throw new Error("Invalid proxy startup.");
-      return new Promise((resolve, rejectStart) => {
-        const failed = () => { server.removeListener("listening", ready); rejectStart(new Error("Proxy startup failed.")); };
-        const ready = () => { server.removeListener("error", failed); resolve((server.address() as { port: number }).port); };
+      if (!Number.isInteger(port) || port < 0 || port > 65535 || stopping || startup || server.listening) throw new Error("Invalid proxy startup.");
+      const pending = new Promise<number>((resolve, rejectStart) => {
+        const cleanup = () => {
+          server.removeListener("listening", ready); server.removeListener("error", failed);
+        };
+        const failed = () => { cleanup(); rejectStart(new Error("Proxy startup failed.")); };
+        const ready = () => { cleanup(); resolve((server.address() as { port: number }).port); };
         server.once("error", failed); server.once("listening", ready);
-        server.listen(port, bindAddress);
+        try { server.listen(port, bindAddress); } catch { failed(); }
       });
+      startup = pending;
+      try { return await pending; }
+      finally { if (startup === pending) startup = undefined; }
     },
-    async close(): Promise<void> {
+    close(): Promise<void> {
+      if (shutdown) return shutdown;
+      // Immediately reject new clients/startups, including during pending bind.
       stopping = true;
-      const closed = [...clients].map(([socket, state]) => new Promise<void>(resolve => {
-        socket.once("close", () => resolve()); teardown(state); socket.destroy();
-      }));
-      for (const timer of timers) clear(timer);
-      if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
-      await Promise.all(closed);
+      shutdown = (async () => {
+        const closed = [...clients].map(([socket, state]) => new Promise<void>(resolve => {
+          socket.once("close", () => resolve()); teardown(state); socket.destroy();
+        }));
+        for (const timer of timers) clear(timer);
+        // A successful pending listen still returns its port, but close must
+        // wait for bind settlement and release that listener before completing.
+        // Startup failure also settles this barrier and cannot block cleanup.
+        if (startup) await startup.catch(() => {});
+        if (server.listening) await new Promise<void>((resolve, rejectClose) => {
+          server.close(error => error ? rejectClose(error) : resolve());
+        });
+        await Promise.all(closed);
+      })();
+      return shutdown;
     },
     diagnostics: () => ({ clients: clients.size, timers: timers.size,
       upstreams: [...clients.values()].filter(state => state.upstream && !state.upstream.destroyed).length }),
