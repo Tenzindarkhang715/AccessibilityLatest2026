@@ -193,3 +193,30 @@ test("launcher prepares and owns parent before unchanged capability drop and ret
   assert.match(shell, /rmdir --/);
   for (const signal of ["HUP", "INT", "TERM"]) assert.ok(shell.includes(`' ${signal}`));
 });
+
+for (const ipv6Probe of [false, true]) test(`links activate before route installation (IPv6 probe: ${ipv6Probe})`, async () => {
+  const active = new Set(); let routes = 0; let ipv6Routes = 0;
+  const boundary = new LinuxBoundary({ ipv6Probe }, async (_file, args) => {
+    const role = Object.keys(boundary.ns).find(key => boundary.ns[key] === args[1]);
+    if (args.includes("link") && args.at(-1) === "up") {
+      const key = `${role}:${args.at(-2)}`;
+      assert.equal(active.has(key), false, "Link must be activated only once");
+      active.add(key);
+    }
+    if (args.includes("route") && args.includes("add")) {
+      assert.equal(active.size, 9, "Every required endpoint must be active before the first route");
+      assert.ok(active.has(`${role}:${args[args.indexOf("dev") + 1]}`));
+      routes++; if (args.includes("-6")) ipv6Routes++;
+    }
+    if (args.includes("-j") && args.includes("link")) return '[{"address":"02:00:00:00:00:01"}]';
+    return "";
+  });
+  const operations = Object.fromEntries(PHASES.map(name => [name, async () => {}]));
+  operations.links = () => boundary.links();
+  operations.routes = () => boundary.routes();
+  boundary.spawnPeer = async () => ({});
+  operations.identities = () => boundary.identities();
+  await runLifecycle(operations, async () => {});
+  assert.deepEqual([...active].sort(), ["w:lo", "w:worker0", "w:escape0", "p:lo", "p:peer0", "p:upstream0", "f:lo", "f:fixture0", "f:escapepeer"].sort());
+  assert.ok(routes > 0); assert.equal(ipv6Routes, ipv6Probe ? 1 : 0);
+});

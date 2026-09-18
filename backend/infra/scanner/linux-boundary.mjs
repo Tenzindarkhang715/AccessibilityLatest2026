@@ -286,6 +286,11 @@ export class LinuxBoundary {
       await this.ip("w", "-6", "neigh", "replace", "2001:db8:77::1", "lladdr", fm, "nud", "permanent", "dev", "escape0");
       await this.ip("f", "-6", "neigh", "replace", "2001:db8:77::2", "lladdr", wm, "nud", "permanent", "dev", "escapepeer");
     }
+    // Routes require active nexthops. All endpoints remain in fresh disconnected
+    // namespaces; workloads start only after firewall and identity verification.
+    for (const [role, links] of [["w", ["lo", "worker0", "escape0"]], ["p", ["lo", "peer0", "upstream0"]], ["f", ["lo", "fixture0", "escapepeer"]]]) {
+      for (const link of links) await this.ip(role, "link", "set", link, "up");
+    }
   }
   async routes() {
     for (const address of Object.values(FIXTURE).filter(v => !v.includes(":"))) {
@@ -351,10 +356,6 @@ export class LinuxBoundary {
     this.proxyPeer = await this.spawnPeer("p", this.config.proxyUid, entry);
     this.fixture = await this.spawnPeer("f", this.config.fixtureUid, helper);
     this.proxyProbe = await this.spawnPeer("p", this.config.proxyUid, helper);
-    // No workload has opened a network socket before this point.
-    for (const [role, links] of [["w", ["lo", "worker0", "escape0"]], ["p", ["lo", "peer0", "upstream0"]], ["f", ["lo", "fixture0", "escapepeer"]]]) {
-      for (const link of links) await this.ip(role, "link", "set", link, "up");
-    }
   }
   async fixtures() { await this.fixture.call({ op: "start", role: "fixture" }); }
   async proxy() { await this.proxyPeer.call({ op: "start", ...this.config.policy, secret: this.secret }); }
