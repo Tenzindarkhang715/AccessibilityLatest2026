@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { harnessConfig, runLifecycle, PHASES, normalizeRuleset, verifyRuleset, dropPackets, command, LinuxBoundary, verifySupervisor } from "../infra/scanner/linux-boundary.mjs";
+import { harnessConfig, runLifecycle, PHASES, normalizeRuleset, verifyRuleset, dropPackets, command, LinuxBoundary, verifySupervisor, validateCgroupParent, workloadCgroupPath } from "../infra/scanner/linux-boundary.mjs";
 import { verifyIdentity } from "../infra/scanner/proxy-entry.mjs";
 import { dnsResponse } from "./helpers/scanner-network-fixtures.mjs";
 
@@ -143,4 +143,53 @@ test("supervisor rejects excess or missing setup capabilities", () => {
   assert.throws(() => verifySupervisor(status.replace(`CapBnd: ${mask}`, "CapBnd: ffffffffff")));
   assert.throws(() => verifySupervisor(status.replace(`CapEff: ${mask}`, "CapEff: 0")));
   assert.throws(() => verifySupervisor(status.replace("CapAmb: 0", "CapAmb: 1")));
+});
+
+const preparedParent = "/sys/fs/cgroup/scanner-parent-abc123ABC456";
+function parentFs(overrides = {}) {
+  return {
+    realpath: async p => p,
+    lstat: async () => ({ isDirectory: () => true, isSymbolicLink: () => false, uid: 0, gid: 0, mode: 0o40700 }),
+    statfs: async () => ({ type: 0x63677270 }),
+    access: async () => {},
+    readFile: async p => p.endsWith("cgroup.procs") ? "" : "memory pids",
+    ...overrides,
+  };
+}
+test("prepared cgroup parent accepts private root-owned cgroup v2 without root-directory write access", async () => {
+  const fs = parentFs({ access: async p => { assert.ok(p.startsWith(preparedParent)); } });
+  assert.equal(await validateCgroupParent(preparedParent, fs), preparedParent);
+  assert.equal(workloadCgroupPath(preparedParent, "scanner-012345abcdef", 2), `${preparedParent}/scanner-012345abcdef-2`);
+});
+test("prepared parent rejects missing, root, traversal, noncanonical and unsafe filesystem handoffs", async () => {
+  for (const p of [undefined, "", "/sys/fs/cgroup", preparedParent + "/", preparedParent + "/../other", "/tmp/scanner-parent-abc123ABC456"])
+    await assert.rejects(validateCgroupParent(p, parentFs()));
+  for (const fs of [
+    parentFs({ realpath: async () => "/elsewhere" }),
+    parentFs({ statfs: async () => ({ type: 0 }) }),
+    parentFs({ access: async () => { throw new Error("denied"); } }),
+    parentFs({ readFile: async () => "123" }),
+    parentFs({ readFile: async p => p.endsWith("cgroup.procs") ? "" : "pids" }),
+    ...[{ uid: 1000 }, { gid: 1000 }, { mode: 0o40777 }, { isSymbolicLink: () => true }].map(change => parentFs({
+      lstat: async () => ({ ...(await parentFs().lstat()), ...change }),
+    })),
+  ]) await assert.rejects(validateCgroupParent(preparedParent, fs));
+});
+test("workload cgroup paths cannot escape the prepared parent", () => {
+  for (const args of [[undefined, "scanner-012345abcdef", 0], [preparedParent, "../escape", 0],
+    [preparedParent, "scanner-012345abcdef", -1], [preparedParent, "scanner-012345abcdef", 0.5]])
+    assert.throws(() => workloadCgroupPath(...args));
+});
+test("launcher prepares and owns parent before unchanged capability drop and retains cleanup traps", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const shell = await readFile(new URL("../infra/scanner/linux-boundary.sh", import.meta.url), "utf8");
+  assert.ok(shell.indexOf("trap cleanup EXIT") < shell.indexOf("parent=$(mktemp"));
+  assert.ok(shell.indexOf('chmod 700 "$parent"') < shell.indexOf("\nsetpriv"));
+  assert.match(shell, /unset SCANNER_CGROUP_PARENT/);
+  assert.match(shell, /SCANNER_CGROUP_PARENT=\$parent/);
+  assert.match(shell, /--bounding-set=-all,\+kill,\+setgid,\+setuid,\+setpcap,\+net_admin,\+sys_admin/);
+  assert.doesNotMatch(shell, /dac_override|exec setpriv/);
+  assert.match(shell, /parent\/cgroup.kill/);
+  assert.match(shell, /rmdir --/);
+  for (const signal of ["HUP", "INT", "TERM"]) assert.ok(shell.includes(`' ${signal}`));
 });

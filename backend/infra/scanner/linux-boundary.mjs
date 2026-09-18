@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile, rmdir, realpath, access, readlink, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rmdir, realpath, access, readlink, stat, lstat, statfs } from "node:fs/promises";
 import { constants } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -174,6 +174,27 @@ export function verifySupervisor(status) {
   }
 }
 
+/** Trusted launcher handoff only; never accept a root, sibling or symlink path. */
+export async function validateCgroupParent(parent, fs = { realpath, lstat, statfs, readFile, access }) {
+  if (typeof parent !== "string" || !/^\/sys\/fs\/cgroup\/scanner-parent-[A-Za-z0-9]{12}$/.test(parent)) fail("Invalid prepared cgroup parent");
+  if (await fs.realpath(parent) !== parent) fail("Cgroup parent must be canonical");
+  const info = await fs.lstat(parent);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== 0 || info.gid !== 0 || (info.mode & 0o7777) !== 0o700) fail("Unsafe cgroup parent ownership or mode");
+  if ((await fs.statfs(parent)).type !== 0x63677270) fail("Cgroup v2 parent required");
+  await fs.access(parent, constants.W_OK | constants.X_OK);
+  await fs.access(`${parent}/cgroup.kill`, constants.W_OK);
+  if ((await fs.readFile(`${parent}/cgroup.procs`, "utf8")).trim()) fail("Cgroup parent must contain no processes");
+  const controllers = (await fs.readFile(`${parent}/cgroup.subtree_control`, "utf8")).trim().split(/\s+/);
+  if (!["memory", "pids"].every(name => controllers.includes(name))) fail("Prepared parent requires memory and pids controllers");
+  return parent;
+}
+
+export function workloadCgroupPath(parent, id, index) {
+  if (typeof parent !== "string" || !/^\/sys\/fs\/cgroup\/scanner-parent-[A-Za-z0-9]{12}$/.test(parent)
+      || !/^scanner-[a-f0-9]{12}$/.test(id) || !Number.isSafeInteger(index) || index < 0) fail("Invalid workload cgroup path");
+  return `${parent}/${id}-${index}`;
+}
+
 export class LinuxBoundary {
   constructor(options = {}, runner = command) {
     this.config = harnessConfig(options); this.run = runner;
@@ -202,10 +223,7 @@ export class LinuxBoundary {
       if (passwd.split("\n").some(line => Number(line.split(":")[2]) === uid)) fail("Reference workload UID already assigned");
     }
     await access(path.join(root, "dist/security/egress-proxy.js"), constants.R_OK);
-    await access("/sys/fs/cgroup/cgroup.controllers", constants.R_OK);
-    await access("/sys/fs/cgroup", constants.W_OK);
-    const controllers = (await readFile("/sys/fs/cgroup/cgroup.subtree_control", "utf8")).trim().split(/\s+/);
-    if (!["memory", "pids"].every(name => controllers.includes(name))) fail("Disposable runner must enable memory and pids cgroup controllers in advance");
+    this.cgroupParent = await validateCgroupParent(process.env.SCANNER_CGROUP_PARENT);
     this.baseNamespaces = await this.run("ip", ["netns", "list"]);
     this.baseLinks = await this.run("ip", ["-j", "link", "show"]);
     this.hostNet = await readlink("/proc/self/ns/net");
@@ -306,7 +324,7 @@ export class LinuxBoundary {
     verifyRuleset(this.config.control ? { nftables: [] } : this.expected.p, await this.rules("p"));
   }
   async spawnPeer(role, uid, script) {
-    const group = `/sys/fs/cgroup/${this.id}-${this.groups.length}`;
+    const group = workloadCgroupPath(this.cgroupParent, this.id, this.groups.length);
     await mkdir(group); this.groups.push(group);
     await access(`${group}/cgroup.kill`, constants.W_OK);
     await writeFile(`${group}/pids.max`, "32"); await writeFile(`${group}/memory.max`, "268435456");

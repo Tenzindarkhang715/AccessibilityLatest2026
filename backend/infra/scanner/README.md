@@ -88,8 +88,8 @@ No installation or provisioning is performed by this harness. Require:
 - Root supervisor, Linux network/mount/PID namespaces, IPv6 support for denial tests.
 - `iproute2`, `nftables` with JSON/interval auto-merge support, `sysctl`, `mount`,
   `unshare` and `setpriv` from util-linux. `/var/run` must resolve to `/run`.
-- Writable cgroup v2 root with memory and pids controllers already enabled, and
-  per-cgroup `cgroup.kill` support. The harness does not enable host controllers.
+- Read-write cgroup v2 mount with memory and pids controllers already enabled at the root, and
+  per-cgroup `cgroup.kill` support. The launcher needs root permission to create a dedicated parent; the mount root may be mode 0555. It does not enable root controllers.
 - Existing backend dependencies/build; Node and the repository installed at
   root-owned globally traversable locations such as `/usr/bin/node` and `/opt/scanner`.
   Paths under `/root`, `/home`, `/run` or `/tmp` are rejected because workload mounts
@@ -143,6 +143,17 @@ All target connections, including control connections, stay within the disconnec
 namespaces. Host/gateway tests use simulated endpoints, never real host services.
 
 ### Lifecycle and privilege ownership
+
+Before dropping capabilities, the trusted root shell creates a unique root-owned mode-0700
+`/sys/fs/cgroup/scanner-parent-*` parent and enables its memory/pids controllers.
+It passes that parent through `SCANNER_CGROUP_PARENT`, replacing any caller value.
+Node validates the canonical path, ownership, mode, cgroup v2 filesystem, empty
+parent process list, write access, kill support and enabled controllers. All workload
+cgroups are created beneath that parent. The shell remains outside it, traps normal
+exit and HUP/INT/TERM, kills remaining descendants and removes owned cgroup directories;
+cleanup failure returns nonzero. SIGKILL still requires outer runner cleanup.
+The invocation is unchanged. The launcher additionally uses `id`, `mktemp`, `chown`,
+`chmod`, `find`, `rmdir` and `sleep`.
 
 The shell entry bounds the supervisor to CAP_KILL, CAP_SETGID, CAP_SETUID,
 CAP_SETPCAP, CAP_NET_ADMIN and CAP_SYS_ADMIN, with empty inheritable/ambient sets.
