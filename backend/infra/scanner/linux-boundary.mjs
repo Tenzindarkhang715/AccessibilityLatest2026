@@ -148,10 +148,15 @@ const waitBounded = (promise, ms) => new Promise((resolve, reject) => {
   promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
 });
 
-// Static shell program only. All variable data is positional, never shell-interpolated.
-// It executes after entering a fresh network, PID and mount namespace.
-const WORKLOAD_SETUP = `set -u
+// Static shell programs only. All variable data is positional, never shell-interpolated.
+// CGROUP_SETUP executes before entering the network, PID and mount namespaces.
+// WORKLOAD_SETUP executes after entering a fresh network, PID and mount namespace.
+const CGROUP_SETUP = `set -eu
 printf '0' > "$1/cgroup.procs" || exit 21
+shift
+exec "$@"
+`;
+const WORKLOAD_SETUP = `set -u
 mount --make-rprivate / || exit 22
 mount --bind / / || exit 23
 mount -o remount,bind,ro / || exit 24
@@ -335,9 +340,10 @@ export class LinuxBoundary {
     await mkdir(group); this.groups.push(group);
     await access(`${group}/cgroup.kill`, constants.W_OK);
     await writeFile(`${group}/pids.max`, "32"); await writeFile(`${group}/memory.max`, "268435456");
-    const args = ["netns", "exec", this.ns[role], "unshare", "--mount", "--pid", "--fork", "--mount-proc",
-      "/bin/sh", "-c", WORKLOAD_SETUP, "scanner-workload", group, String(uid), process.execPath, script];
-    const child = spawn("ip", args, { env: { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C" }, stdio: ["pipe", "pipe", "pipe"] });
+   const args = ["-c", CGROUP_SETUP, "scanner-cgroup", group,
+  "ip", "netns", "exec", this.ns[role], "unshare", "--mount", "--pid", "--fork", "--mount-proc",
+  "/bin/sh", "-c", WORKLOAD_SETUP, "scanner-workload", group, String(uid), process.execPath, script];
+const child = spawn("/bin/sh", args, { env: { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C" }, stdio: ["pipe", "pipe", "pipe"] });
     const peer = new PipePeer(child, error => this.failed(error), role); peer.group = group; this.peers.push(peer);
     const proof = await waitBounded(peer.identity, 5000);
     verifyIdentity(proof, uid, uid);
