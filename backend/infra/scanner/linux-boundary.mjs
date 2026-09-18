@@ -105,12 +105,13 @@ export function dropPackets(document, chain = "output", ipv6 = false) {
 }
 
 class PipePeer {
-  constructor(child, onFailure) {
+  constructor(child, onFailure, label = "unknown") {
     this.child = child; this.next = 0; this.requests = new Map(); this.buffer = "";
     this.identity = new Promise((resolve, reject) => { this.identify = resolve; this.rejectIdentity = reject; });
     this.identity.catch(() => {});
-    this.exited = new Promise(resolve => { child.once("close", code => { this.dead = true; resolve(code);
-      const error = new Error("Owned workload exited"); this.rejectIdentity(error);
+    this.exited = new Promise(resolve => { child.once("close", (code, signal) => { this.dead = true; resolve(code);
+      const status = signal ? `signal ${signal}` : `code ${code}`;
+      const error = new Error(`Owned workload exited (${label}, ${status})`); this.rejectIdentity(error);
       for (const pending of this.requests.values()) { clearTimeout(pending.timer); pending.reject(error); }
       this.requests.clear(); if (!this.expectedExit) onFailure(error);
     }); });
@@ -336,7 +337,7 @@ export class LinuxBoundary {
     const args = ["netns", "exec", this.ns[role], "unshare", "--mount", "--pid", "--fork", "--mount-proc",
       "/bin/sh", "-c", WORKLOAD_SETUP, "scanner-workload", group, String(uid), process.execPath, script];
     const child = spawn("ip", args, { env: { PATH: "/usr/sbin:/usr/bin:/sbin:/bin", LANG: "C" }, stdio: ["pipe", "pipe", "pipe"] });
-    const peer = new PipePeer(child, error => this.failed(error)); peer.group = group; this.peers.push(peer);
+    const peer = new PipePeer(child, error => this.failed(error), role); peer.group = group; this.peers.push(peer);
     const proof = await waitBounded(peer.identity, 5000);
     verifyIdentity(proof, uid, uid);
     const netns = `net:[${(await stat(`/var/run/netns/${this.ns[role]}`)).ino}]`;
