@@ -150,18 +150,19 @@ const waitBounded = (promise, ms) => new Promise((resolve, reject) => {
 
 // Static shell program only. All variable data is positional, never shell-interpolated.
 // It executes after entering a fresh network, PID and mount namespace.
-const WORKLOAD_SETUP = `set -eu
-printf '0' > "$1/cgroup.procs"
-mount --make-rprivate /
-mount --bind / /
-mount -o remount,bind,ro /
-mount -t tmpfs -o mode=700,nosuid,nodev tmpfs /root
-mount -t tmpfs -o mode=700,nosuid,nodev tmpfs /home
-mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run
-mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp
-mount --bind /sys /sys
-mount -o remount,bind,ro /sys
+const WORKLOAD_SETUP = `set -u
+printf '0' > "$1/cgroup.procs" || exit 21
+mount --make-rprivate / || exit 22
+mount --bind / / || exit 23
+mount -o remount,bind,ro / || exit 24
+mount -t tmpfs -o mode=700,nosuid,nodev tmpfs /root || exit 25
+mount -t tmpfs -o mode=700,nosuid,nodev tmpfs /home || exit 26
+mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run || exit 27
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp || exit 28
+mount --bind /sys /sys || exit 29
+mount -o remount,bind,ro /sys || exit 30
 exec setpriv --reuid="$2" --regid="$2" --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- "$3" "$4"
+exit 31
 `;
 
 // kill, setgid, setuid, setpcap, net_admin, sys_admin: setup/identity/cleanup only.
