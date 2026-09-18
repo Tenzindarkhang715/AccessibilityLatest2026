@@ -428,4 +428,23 @@ checks are unchanged. Neither config nor binding is controlled by HTTP requests.
 No Linux isolation or browser-wide SSRF protection exists in this increment.
 Chromium remains disconnected from the proxy, the fixture scanner is unchanged,
 and valid API submissions still return 503 SCANNER_UNAVAILABLE with no run ID,
-history, job or findings. No package or runtime launcher was added.
+history, job or findings. No package was added. The separate reference harness below
+does not activate this policy in the application.
+
+## Disconnected Linux reference harness (Step 2)
+
+`infra/scanner/linux-boundary.sh` explicitly opts into the real Linux integration
+suite. The implementation uses dedicated worker/proxy/fixture namespaces, the
+unchanged network-policy renderer, non-root capability-free workloads and controlled
+DNS/socket fixtures. See `infra/scanner/README.md` for prerequisites, topology,
+privilege checks, teardown and the full execution procedure.
+
+Portable lifecycle tests run with `node --test test/scanner-linux-boundary.test.mjs`.
+The full test suite reports Linux integration as NOT RUN/skipped without explicit
+opt-in; macOS results do not validate Linux packet enforcement. No Linux firewall,
+namespace or interface is created by portable tests or module imports.
+
+The harness does not connect Chromium, activate API scanning, change packages or
+supply seccomp profiles. Production hosting and hostile-browser containment remain
+separate work. Valid POST /api/tests remains 503 SCANNER_UNAVAILABLE without IDs,
+history, jobs or findings. Existing fixture scanning and Re-Test behavior are intact.
