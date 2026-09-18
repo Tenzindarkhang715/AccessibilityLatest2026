@@ -51,7 +51,20 @@ export function validateNetworkConfig(input) {
       || input.deploymentExclusions.length > 1024) fail();
   const exclusions = [...new Set(Array.from(input.deploymentExclusions, cidr))].sort();
   // Reject a configuration that rules out all IPv4 target traffic.
-  if (exclusions.includes("0.0.0.0/0")) fail();
+  // Numbers represent all IPv4 endpoints and the exclusive upper bound 2**32
+  // exactly. Avoid signed 32-bit bitwise arithmetic for interval endpoints.
+  const intervals = exclusions.map(range => {
+    const [base, prefix] = range.split("/");
+    const start = number(base);
+    return [start, start + 2 ** (32 - Number(prefix)) - 1];
+  }).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged = [];
+  for (const [start, end] of intervals) {
+    const previous = merged[merged.length - 1];
+    if (previous && start <= previous[1] + 1) previous[1] = Math.max(previous[1], end);
+    else merged.push([start, end]);
+  }
+  if (merged.length === 1 && merged[0][0] === 0 && merged[0][1] === 2 ** 32 - 1) fail();
   return Object.freeze({ ...input, deploymentExclusions: Object.freeze(exclusions) });
 }
 

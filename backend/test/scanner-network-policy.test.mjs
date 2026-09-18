@@ -74,3 +74,52 @@ test("mirrored IPv4 exclusions agree with production policy at every boundary an
   for (let first = 0; first < 256; first++) for (let second = 0; second < 256; second++) samples.add(n(`${first}.${second}.0.1`));
   for (const v of samples) assert.equal(assessAddress(ip(v)).allowed, !ranges.some(([a, b]) => v >= a && v <= b), ip(v));
 });
+
+for (const [name, exclusions] of [
+  ["single /0", ["0.0.0.0/0"]],
+  ["split /1 coverage", ["0.0.0.0/1", "128.0.0.0/1"]],
+  ["unordered coverage", ["128.0.0.0/1", "0.0.0.0/1"]],
+  ["four adjacent quarters", ["0.0.0.0/2", "64.0.0.0/2", "128.0.0.0/2", "192.0.0.0/2"]],
+  ["overlapping and adjacent unordered coverage", ["192.0.0.0/2", "0.0.0.0/2",
+    "128.0.0.0/2", "0.0.0.0/1", "32.0.0.0/3", "128.0.0.0/1"]],
+]) {
+  test(`rejects full IPv4 interval union: ${name}`, () => {
+    const c = { ...config(), deploymentExclusions: exclusions };
+    assert.throws(() => validateNetworkConfig(c), /Invalid scanner network configuration/);
+    assert.throws(() => renderNetworkPolicy(c), /Invalid scanner network configuration/);
+  });
+}
+
+// Canonical CIDRs covering every address except one, without enumerating addresses.
+function allExcept(address) {
+  const value = address.split(".").reduce((n, part) => n * 256 + Number(part), 0);
+  const format = n => [24, 16, 8, 0].map(shift => (n >>> shift) & 255).join(".");
+  const ranges = [];
+  for (let prefix = 1; prefix <= 32; prefix++) {
+    const size = 2 ** (32 - prefix);
+    const parent = Math.floor(value / (2 * size)) * (2 * size);
+    const sibling = value < parent + size ? parent + size : parent;
+    ranges.push(`${format(sibling)}/${prefix}`);
+  }
+  return ranges.reverse();
+}
+for (const gap of ["0.0.0.0", "8.8.8.8", "255.255.255.255"]) {
+  test(`accepts near-complete coverage with exactly one address gap: ${gap}`, () => {
+    const exclusions = allExcept(gap);
+    const size = exclusions.reduce((sum, range) => sum + 2 ** (32 - Number(range.split("/")[1])), 0);
+    assert.equal(size, 2 ** 32 - 1);
+    const c = { ...config(), deploymentExclusions: exclusions };
+    assert.doesNotThrow(() => validateNetworkConfig(c));
+    assert.doesNotThrow(() => renderNetworkPolicy(c));
+  });
+}
+test("accepts a remaining range and preserves exclusion rendering without replacing CIDRs by merged intervals", () => {
+  const exclusions = ["128.0.0.0/2", "0.0.0.0/1", "64.0.0.0/2"];
+  const c = { ...config(), deploymentExclusions: exclusions };
+  assert.deepEqual(validateNetworkConfig(c).deploymentExclusions, [...exclusions].sort());
+  const rendered = renderNetworkPolicy(c);
+  assert.equal(rendered.worker, renderNetworkPolicy(config()).worker);
+  const expected = [...new Set([...PROHIBITED_IPV4, ...exclusions,
+    `${c.workerAddress}/32`, `${c.proxyAddress}/32`, `${c.resolverAddress}/32`])].sort();
+  assert.ok(rendered.proxy.includes(`elements = { ${expected.join(", ")} }`));
+});
