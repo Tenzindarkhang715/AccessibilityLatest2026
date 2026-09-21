@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { harnessConfig, runLifecycle, PHASES, normalizeRuleset, verifyRuleset, dropPackets, command, LinuxBoundary, verifySupervisor, validateCgroupParent, workloadCgroupPath } from "../infra/scanner/linux-boundary.mjs";
+import { harnessConfig, runLifecycle, PHASES, normalizeRuleset, verifyRuleset, dropPackets, command, LinuxBoundary, verifySupervisor, validateCgroupParent, workloadCgroupPath, topologyCarrierReady } from "../infra/scanner/linux-boundary.mjs";
 import { verifyIdentity } from "../infra/scanner/proxy-entry.mjs";
 import { dnsResponse } from "./helpers/scanner-network-fixtures.mjs";
 
@@ -219,4 +219,73 @@ for (const ipv6Probe of [false, true]) test(`links activate before route install
   await runLifecycle(operations, async () => {});
   assert.deepEqual([...active].sort(), ["w:lo", "w:worker0", "w:escape0", "p:lo", "p:peer0", "p:upstream0", "f:lo", "f:fixture0", "f:escapepeer"].sort());
   assert.ok(routes > 0); assert.equal(ipv6Routes, ipv6Probe ? 1 : 0);
+});
+
+test("topology carrier readiness requires every expected endpoint to have stable carrier", () => {
+  const topology = {
+    w: { links: [
+      { name: "worker0", flags: ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"] },
+      { name: "escape0", flags: ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"] },
+    ] },
+    p: { links: [
+      { name: "peer0", flags: ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"] },
+      { name: "upstream0", flags: ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"] },
+    ] },
+    f: { links: [
+      { name: "fixture0", flags: ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"] },
+      { name: "escapepeer", flags: ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"] },
+    ] },
+  };
+
+  assert.equal(topologyCarrierReady(topology), true);
+
+  const noCarrier = structuredClone(topology);
+  noCarrier.p.links[0].flags.push("NO-CARRIER");
+  assert.equal(topologyCarrierReady(noCarrier), false);
+
+  const missingLowerUp = structuredClone(topology);
+  missingLowerUp.f.links[1].flags =
+    missingLowerUp.f.links[1].flags.filter(flag => flag !== "LOWER_UP");
+  assert.equal(topologyCarrierReady(missingLowerUp), false);
+});
+
+test("probes waits for two consecutive identical carrier-ready topology snapshots", async () => {
+  const links = {
+    w: [
+      { name: "worker0", flags: ["UP", "LOWER_UP"] },
+      { name: "escape0", flags: ["UP", "LOWER_UP"] },
+    ],
+    p: [
+      { name: "peer0", flags: ["UP", "LOWER_UP"] },
+      { name: "upstream0", flags: ["UP", "LOWER_UP"] },
+    ],
+    f: [
+      { name: "fixture0", flags: ["UP", "LOWER_UP"] },
+      { name: "escapepeer", flags: ["UP", "LOWER_UP"] },
+    ],
+  };
+
+  const topology = route => ({
+    w: { links: structuredClone(links.w), routes: [route] },
+    p: { links: structuredClone(links.p), routes: [] },
+    f: { links: structuredClone(links.f), routes: [] },
+  });
+
+  const first = topology("initial");
+  const stable = topology("settled");
+  const snapshots = [first, stable, structuredClone(stable)];
+  const boundary = new LinuxBoundary();
+
+  boundary.worker = { call: async () => ({}) };
+  boundary.proxyProbe = { call: async () => ({}) };
+  boundary.topologySnapshot = async () => {
+    assert.ok(snapshots.length > 0, "Unexpected extra topology snapshot");
+    return snapshots.shift();
+  };
+
+  await boundary.probes();
+
+  assert.deepEqual(boundary.topology, stable);
+  assert.equal(boundary.ready, true);
+  assert.equal(snapshots.length, 0);
 });

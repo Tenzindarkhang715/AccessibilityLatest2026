@@ -318,6 +318,8 @@ const waitBounded = (promise, ms) => new Promise((resolve, reject) => {
   );
 });
 
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 // Static shell programs only. All variable data is positional, never shell-interpolated.
 // CGROUP_SETUP executes before entering the network, PID and mount namespaces.
 // WORKLOAD_SETUP executes after entering a fresh network, PID and mount namespace.
@@ -360,6 +362,151 @@ export function verifySupervisor(status) {
     if (bits !== (["CapInh", "CapAmb"].includes(name) ? 0n : SETUP_CAPS)) {
       fail("Supervisor must have only the documented setup capabilities; use linux-boundary.sh");
     }
+  }
+}
+
+/**
+ * Verify the steady-state members of one workload cgroup.
+ *
+ * Moving the launcher into the cgroup before unshare is intentional:
+ * the cgroup must already be visible when namespace setup begins.
+ *
+ * At the identity barrier there must be:
+ *   1. exactly one trusted launcher process in the host PID namespace; and
+ *   2. one or more unprivileged workload processes in the private PID
+ *      namespace created by that launcher.
+ *
+ * The workload proves its own PID, network and mount namespaces before this
+ * check. The restricted supervisor intentionally lacks CAP_SYS_PTRACE, so it
+ * must not depend on cross-UID /proc/<pid>/ns/* readlink access here.
+ * Instead, cgroup members are verified from /proc/<pid>/status, including
+ * NSpid, UID/GID, NoNewPrivs and capability state.
+ */
+async function verifyWorkloadCgroupMembers({
+  group,
+  launcherPid,
+  uid,
+  proof,
+  hostPid,
+}) {
+  if (
+    !Number.isSafeInteger(launcherPid)
+    || launcherPid <= 1
+  ) {
+    fail("Invalid trusted launcher PID");
+  }
+
+  if (
+    typeof proof?.pid !== "string"
+    || proof.pid === hostPid
+  ) {
+    fail("Invalid workload PID namespace proof");
+  }
+
+  const text = (
+    await readFile(
+      `${group}/cgroup.procs`,
+      "utf8",
+    )
+  ).trim();
+
+  if (!text) {
+    fail("Missing cgroup membership");
+  }
+
+  const pids = text.split(/\s+/);
+
+  if (
+    pids.some(pid => !/^\d+$/.test(pid))
+    || new Set(pids).size !== pids.length
+  ) {
+    fail("Invalid cgroup membership");
+  }
+
+  let launcherCount = 0;
+  let workloadCount = 0;
+
+  for (const pidText of pids) {
+    const pid = Number(pidText);
+    const status = await readFile(
+      `/proc/${pid}/status`,
+      "utf8",
+    );
+
+    const nsPidText = status.match(
+      /^NSpid:\s+([0-9\s]+)$/m,
+    )?.[1];
+
+    if (!nsPidText) {
+      fail("Missing process PID namespace evidence");
+    }
+
+    const nsPids = nsPidText
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+
+    if (
+      nsPids.some(
+        value => !Number.isSafeInteger(value) || value <= 0,
+      )
+      || nsPids[0] !== pid
+    ) {
+      fail("Invalid process PID namespace evidence");
+    }
+
+    if (pid === launcherPid) {
+      launcherCount += 1;
+
+      if (
+        nsPids.length !== 1
+        || !/^Uid:\s+0\s+0\s+0\s+0$/m.test(status)
+        || !/^Gid:\s+0\s+0\s+0\s+0$/m.test(status)
+        || !/^NoNewPrivs:\s+0$/m.test(status)
+      ) {
+        fail("Trusted launcher identity readback failed");
+      }
+
+      verifySupervisor(status);
+      continue;
+    }
+
+    workloadCount += 1;
+
+    if (
+      nsPids.length < 2
+      || !new RegExp(
+        `^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`,
+        "m",
+      ).test(status)
+      || !new RegExp(
+        `^Gid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`,
+        "m",
+      ).test(status)
+      || !/^NoNewPrivs:\s+1$/m.test(status)
+      || [
+        "CapInh",
+        "CapPrm",
+        "CapEff",
+        "CapBnd",
+        "CapAmb",
+      ].some(
+        name => !new RegExp(
+          `^${name}:\\s+0+$`,
+          "m",
+        ).test(status),
+      )
+    ) {
+      fail("Workload privilege readback failed");
+    }
+  }
+
+  if (launcherCount !== 1) {
+    fail("Trusted launcher membership mismatch");
+  }
+
+  if (workloadCount < 1) {
+    fail("Workload membership mismatch");
   }
 }
 
@@ -425,6 +572,31 @@ export function workloadCgroupPath(parent, id, index) {
   }
 
   return `${parent}/${id}-${index}`;
+}
+
+export function topologyCarrierReady(topology) {
+  const expected = {
+    w: ["worker0", "escape0"],
+    p: ["peer0", "upstream0"],
+    f: ["fixture0", "escapepeer"]
+  };
+
+  return Object.entries(expected).every(
+    ([role, names]) =>
+      Array.isArray(topology?.[role]?.links) &&
+      names.every(name => {
+        const link = topology[role].links.find(
+          candidate => candidate.name === name
+        );
+
+        return (
+          Array.isArray(link?.flags) &&
+          link.flags.includes("UP") &&
+          link.flags.includes("LOWER_UP") &&
+          !link.flags.includes("NO-CARRIER")
+        );
+      })
+  );
 }
 
 export class LinuxBoundary {
@@ -1066,80 +1238,13 @@ export class LinuxBoundary {
       fail("Workload namespace verification failed");
     }
 
-    const pids = (
-      await readFile(
-        `${group}/cgroup.procs`,
-        "utf8"
-      )
-    ).trim().split(/\s+/);
-
-    if (
-      !pids.length ||
-      pids.some(pid => !/^\d+$/.test(pid))
-    ) {
-      fail("Missing cgroup membership");
-    }
-
-    for (const pid of pids) {
-      const status = await readFile(
-        `/proc/${pid}/status`,
-        "utf8"
-      );
-
-      const uidOk = new RegExp(
-        `^Uid:\\s+${uid}\\s+${uid}\\s+${uid}\\s+${uid}$`,
-        "m"
-      ).test(status);
-
-      const nnpOk =
-        /^NoNewPrivs:\s+1$/m.test(status);
-
-      const badCaps = [
-        "CapInh",
-        "CapPrm",
-        "CapEff",
-        "CapBnd",
-        "CapAmb"
-      ].filter(
-        k =>
-          !new RegExp(
-            `^${k}:\\s+0+$`,
-            "m"
-          ).test(status)
-      );
-
-      if (!uidOk || !nnpOk || badCaps.length) {
-        const uidLine =
-          status.match(/^Uid:.*$/m)?.[0] ??
-          "Uid: missing";
-
-        const nnpLine =
-          status.match(/^NoNewPrivs:.*$/m)?.[0] ??
-          "NoNewPrivs: missing";
-
-        const capLines = [
-          "CapInh",
-          "CapPrm",
-          "CapEff",
-          "CapBnd",
-          "CapAmb"
-        ]
-          .map(
-            k =>
-              status.match(
-                new RegExp(
-                  `^${k}:.*$`,
-                  "m"
-                )
-              )?.[0] ?? `${k}: missing`
-          )
-          .join("; ");
-
-        fail(
-          `Supervisor privilege readback failed (pid ${pid}; ${uidLine}; ${nnpLine}; ${capLines})`
-        );
-      }
-    }
+    await verifyWorkloadCgroupMembers({
+      group,
+      launcherPid: child.pid,
+      uid,
+      proof,
+      hostPid: this.hostPid
+    });
 
     return peer;
   }
@@ -1217,8 +1322,30 @@ export class LinuxBoundary {
       role: "proxy-probe"
     });
 
-    this.topology =
-      await this.topologySnapshot();
+    let previous;
+
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const topology = await this.topologySnapshot();
+
+      if (
+        topologyCarrierReady(topology) &&
+        previous &&
+        isDeepStrictEqual(previous, topology)
+      ) {
+        this.topology = topology;
+        break;
+      }
+
+      previous = topologyCarrierReady(topology)
+        ? topology
+        : undefined;
+
+      await delay(20);
+    }
+
+    if (!this.topology) {
+      fail("Namespace topology did not stabilize");
+    }
 
     this.ready = true;
   }
