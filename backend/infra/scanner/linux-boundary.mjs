@@ -12,6 +12,8 @@ import { FIXTURE } from "../../test/helpers/scanner-network-fixtures.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const helper = path.join(root, "test/helpers/scanner-network-fixtures.mjs");
 const entry = fileURLToPath(new URL("./proxy-entry.mjs", import.meta.url));
+const browserEntry = fileURLToPath(new URL("./browser-entry.mjs", import.meta.url));
+const browserExecutable = "/opt/scanner-runtime/chromium-1243/chrome-linux-arm64/chrome";
 const fail = message => { throw new Error(message); };
 
 export const PHASES = Object.freeze(["prerequisites", "configuration", "namespaces", "links", "routes",
@@ -283,7 +285,7 @@ class PipePeer {
     });
   }
 
-  call(message) {
+    call(message, timeoutMs = 5000) {
     if (this.dead) return Promise.reject(new Error("Workload stopped"));
 
     const id = ++this.next;
@@ -292,7 +294,7 @@ class PipePeer {
       const timer = setTimeout(() => {
         this.requests.delete(id);
         reject(new Error("Workload operation deadline"));
-      }, 5000);
+      }, timeoutMs);
 
       this.requests.set(id, { resolve, reject, timer });
 
@@ -686,10 +688,38 @@ export class LinuxBoundary {
       }
     }
 
-    await access(
+    for (const file of [
       path.join(root, "dist/security/egress-proxy.js"),
-      constants.R_OK
-    );
+      path.join(root, "dist/scanning/live-scanner.js"),
+      browserEntry
+    ]) {
+      await access(file, constants.R_OK);
+    }
+        const browserRuntime = "/opt/scanner-runtime";
+
+    if (await realpath(browserRuntime) !== browserRuntime) {
+      fail("Browser runtime must be canonical");
+    }
+
+    const runtimeInfo = await lstat(browserRuntime);
+    const browserInfo = await lstat(browserExecutable);
+
+    if (
+      !runtimeInfo.isDirectory() ||
+      runtimeInfo.isSymbolicLink() ||
+      runtimeInfo.uid !== 0 ||
+      runtimeInfo.gid !== 0 ||
+      (runtimeInfo.mode & 0o022) ||
+      !browserInfo.isFile() ||
+      browserInfo.isSymbolicLink() ||
+      browserInfo.uid !== 0 ||
+      browserInfo.gid !== 0 ||
+      (browserInfo.mode & 0o022)
+    ) {
+      fail("Unsafe browser runtime ownership or mode");
+    }
+
+    await access(browserExecutable, constants.R_OK | constants.X_OK);
 
     this.cgroupParent = await validateCgroupParent(
       process.env.SCANNER_CGROUP_PARENT
@@ -1396,7 +1426,36 @@ export class LinuxBoundary {
         : this.proxyProbe
     ).call(message);
   }
+  async scan(request) {
+    if (
+      !this.ready ||
+      this.closing ||
+      this.failure
+    ) {
+      throw this.failure ??
+        new Error("Scan startup barrier closed");
+    }
 
+    await this.check();
+
+    const browser = await this.spawnPeer(
+      "w",
+      this.config.workerUid,
+      browserEntry
+    );
+
+    return browser.call(
+      {
+        op: "scan",
+        request,
+        proxyServer:
+          `http://${this.config.policy.proxyAddress}:${this.config.policy.proxyPort}`,
+        resolverAddress: this.config.policy.resolverAddress,
+        secret: this.secret
+      },
+      45_000
+    );
+  }
   async topologySnapshot() {
     const result = {};
 

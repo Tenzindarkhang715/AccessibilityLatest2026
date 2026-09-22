@@ -19,7 +19,7 @@ export interface ScanOutcome {
     tags: string[];
     evaluatedRuleIds: string[];
     incompleteRuleIds: string[];
-    mode: "fixture-only";
+    mode: "fixture-only" | "live";
   };
 }
 
