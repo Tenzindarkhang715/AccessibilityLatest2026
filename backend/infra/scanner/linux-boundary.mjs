@@ -295,9 +295,18 @@ class PipePeer {
           this.requests.delete(message.id);
           clearTimeout(request.timer);
 
-          message.error
-            ? request.reject(new Error(message.error))
-            : request.resolve(message.value);
+          if (message.error) {
+            const error = new Error(message.error);
+            const wire = scannerErrorWire(message.code);
+
+            if (wire) {
+              error.code = wire.code;
+            }
+
+            request.reject(error);
+          } else {
+            request.resolve(message.value);
+          }
         } catch {
           onFailure(new Error("Invalid workload protocol"));
         }

@@ -25,6 +25,21 @@ export function verifyIdentity(value, uid, gid) {
   }
 }
 
+const SCANNER_ERROR_CODES = new Set([
+  "UNSUPPORTED_SCAN_OPTIONS",
+  "TARGET_NOT_ALLOWED",
+  "CANCELLED",
+  "SCAN_TIMEOUT",
+  "ENGINE_FAILURE",
+  "FIXTURE_LOAD_FAILED",
+]);
+
+export function workloadErrorCode(error) {
+  return typeof error?.code === "string" && SCANNER_ERROR_CODES.has(error.code)
+    ? error.code
+    : null;
+}
+
 /** Bounded supervisor pipe protocol. EOF kills this owned workload; no network control API. */
 export async function serve(handler, dispose = async () => {}) {
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -44,8 +59,16 @@ export async function serve(handler, dispose = async () => {}) {
       try {
         const value = await handler(message);
         process.stdout.write(JSON.stringify({ id: message.id, value }) + "\n");
-      } catch {
-        process.stdout.write(JSON.stringify({ id: message.id, error: "Workload operation failed" }) + "\n");
+      } catch (error) {
+        const code = workloadErrorCode(error);
+
+        process.stdout.write(
+          JSON.stringify({
+            id: message.id,
+            error: "Workload operation failed",
+            ...(code ? { code } : {}),
+          }) + "\n",
+        );
       }
     }
   } finally { clearTimeout(watchdog); await stop(); }
