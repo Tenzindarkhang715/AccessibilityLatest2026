@@ -32,6 +32,17 @@ export interface TestResult {
 }
 
 export async function getRecentTests(): Promise<HistoryRecord[] | undefined> {
+  if (IS_GITHUB_PAGES) {
+    try {
+      const history = JSON.parse(
+        localStorage.getItem("accessibilityTestHistory") || "[]"
+      );
+      return Array.isArray(history) ? history.slice(0, 10) : [];
+    } catch {
+      return [];
+    }
+  }
+
   const resp = await fetch("/api/tests?limit=10", {
     method: "GET",
     headers: {
@@ -67,6 +78,35 @@ export async function submitTest(
   { type, value, browsers, wcag }: SubmitResult,
   _standard: string,
 ): Promise<string> {
+  if (IS_GITHUB_PAGES) {
+    const runId = `demo-${Date.now()}`;
+    const demoTest: HistoryRecord = {
+      sys_id: runId,
+      url: value,
+      name: value,
+      browser: browsers.join(", "),
+      wcag_standard: wcag,
+      status: "completed",
+      notes: `Demo test. Browsers: ${browsers.join(", ")}.`,
+      sys_created_on: new Date().toISOString(),
+    };
+
+    try {
+      const existingHistory = JSON.parse(
+        localStorage.getItem("accessibilityTestHistory") || "[]"
+      );
+      const history = Array.isArray(existingHistory) ? existingHistory : [];
+      localStorage.setItem(
+        "accessibilityTestHistory",
+        JSON.stringify([demoTest, ...history].slice(0, 10))
+      );
+    } catch {
+      throw new Error("Failed to save demo test");
+    }
+
+    return runId;
+  }
+
   const resp = await fetch("/api/tests", {
     method: "POST",
     headers: {
