@@ -1,17 +1,14 @@
-// Data access for the existing ServiceNow and local demo execution paths.
+// Data access for the standalone API and GitHub Pages demo execution paths.
 // Keep platform details here; React owns presentation and request lifecycle state.
-const TABLE_API = "/api/now/table/x_2191106_test_age_url_test";
-const RESULTS_API = "/api/now/table/x_2191106_test_age_test_result";
 const IS_GITHUB_PAGES =
-  window.location.hostname === "tenzindarkhang715.github.io" ||
-  window.location.hostname === "localhost" ||
-  window.location.hostname === "127.0.0.1";
+  window.location.hostname === "tenzindarkhang715.github.io";
 
 export interface SubmitResult {
   type: "site" | "page";
   value: string;
   browsers: string[];
   wcag: string;
+  runId?: string;
 }
 
 export interface HistoryRecord {
@@ -34,161 +31,181 @@ export interface TestResult {
   screenshot: string;
 }
 
-/** Safely retrieve the CSRF token from the global scope. */
-function getCsrfToken(): string {
-  const w = window as unknown as Record<string, unknown>;
-  if (typeof w.g_ck === "string" && w.g_ck.length > 0) {
-    return w.g_ck;
-  }
-  return "";
-}
-
 export async function getRecentTests(): Promise<HistoryRecord[] | undefined> {
-  if (IS_GITHUB_PAGES) {
-    return JSON.parse(localStorage.getItem("accessibilityTestHistory") || "[]");
+  const resp = await fetch("/api/tests?limit=10", {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!resp.ok) {
+    // Preserve the currently displayed history when the request fails.
+    return undefined;
   }
 
-  const token = getCsrfToken();
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (token) headers["X-UserToken"] = token;
+  const data = await resp.json();
 
-  const resp = await fetch(
-    `${TABLE_API}?sysparm_limit=10&sysparm_order_by=-sys_created_on&sysparm_display_value=true`,
-    { method: "GET", headers },
-  );
-  if (resp.ok) {
-    const data = await resp.json();
-    return data.result || [];
-  }
-  // Preserve the currently displayed history when the request fails.
-  return undefined;
+  return (data.tests || []).map((test: {
+    id: string;
+    url: string;
+    wcagStandard: string;
+    browsers: string[];
+    status: string;
+    submittedAt: string;
+  }) => ({
+    sys_id: test.id,
+    url: test.url,
+    wcag_standard: test.wcagStandard,
+    browser: test.browsers.join(", "),
+    status: test.status,
+    sys_created_on: test.submittedAt,
+  }));
 }
 
 export async function submitTest(
   { type, value, browsers, wcag }: SubmitResult,
-  standard: string,
-): Promise<void> {
-  // GitHub Pages Demo Mode
-  if (IS_GITHUB_PAGES) {
-    const demoTest = {
-      sys_id: Date.now().toString(),
-      url: value,
-      name: (type === "site" ? "Site Test - " : "Page Test - ") + value,
-      browser: browsers.join(", "),
-      wcag_standard: wcag,
-      status: "completed",
-      notes:
-        `Test against ${standard}. ` +
-        (type === "site"
-          ? "Full website accessibility test."
-          : "Single page accessibility test.") +
-        ` Browsers: ${browsers.join(", ")}.`,
-      sys_created_on: new Date().toISOString(),
-    };
-
-    const existingHistory = JSON.parse(
-      localStorage.getItem("accessibilityTestHistory") || "[]"
-    );
-
-    localStorage.setItem(
-      "accessibilityTestHistory",
-      JSON.stringify([demoTest, ...existingHistory])
-    );
-
-    return;
-  }
-
-  // Existing ServiceNow behavior
-  const token = getCsrfToken();
-  if (!token) {
-    throw new Error("Security token (g_ck) is missing. Please reload the page and try again.");
-  }
-
-  const resp = await fetch(TABLE_API, {
+  _standard: string,
+): Promise<string> {
+  const resp = await fetch("/api/tests", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-UserToken": token,
       Accept: "application/json",
     },
     body: JSON.stringify({
       url: value,
-      name: (type === "site" ? "Site Test - " : "Page Test - ") + value,
-      browser: browsers.join(", "),
-      wcag_standard: wcag,
-      status: "pending",
-      notes:
-        `Test against ${standard}. ` +
-        (type === "site"
-          ? "Full website accessibility test."
-          : "Single page accessibility test.") +
-        ` Browsers: ${browsers.join(", ")}.`,
+      testType: type,
+      browsers,
+      wcagStandard: wcag,
     }),
   });
 
-  if (!resp.ok) throw new Error("Failed to submit: " + resp.status);
-}
-
-export async function getResults(submittedUrl: string): Promise<TestResult[]> {
-  // GitHub Pages Demo Mode: return representative local demo results.
-  // ServiceNow behavior below remains unchanged.
-  if (IS_GITHUB_PAGES) {
-    return [
-      {
-        sys_id: `demo-result-1-${submittedUrl}`,
-        test_url: submittedUrl,
-        test_type: "site",
-        issue: "Images should have alternative text",
-        issue_type: "error",
-        fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
-        severity: "high",
-        screenshot: "",
-      },
-      {
-        sys_id: `demo-result-2-${submittedUrl}`,
-        test_url: submittedUrl,
-        test_type: "site",
-        issue: "Form controls should have accessible labels",
-        issue_type: "warning",
-        fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/labels-or-instructions.html",
-        severity: "medium",
-        screenshot: "",
-      },
-      {
-        sys_id: `demo-result-3-${submittedUrl}`,
-        test_url: submittedUrl,
-        test_type: "site",
-        issue: "Page should contain a descriptive title",
-        issue_type: "notice",
-        fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/page-titled.html",
-        severity: "low",
-        screenshot: "",
-      },
-    ];
+  if (!resp.ok) {
+    let message = `Failed to submit: ${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error?.message) {
+        message = data.error.message;
+      }
+    } catch {
+      // Keep the safe generic message.
+    }
+    throw new Error(message);
   }
 
-  const token = getCsrfToken();
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (token) headers["X-UserToken"] = token;
-
-  const query = encodeURIComponent(`test_url=${submittedUrl}`);
-  const resp = await fetch(
-    `${RESULTS_API}?sysparm_query=${query}&sysparm_display_value=true&sysparm_limit=50`,
-    { method: "GET", headers },
-  );
-  if (!resp.ok) return [];
   const data = await resp.json();
-  return (data.result || []) as TestResult[];
+  if (!data?.test?.id || typeof data.test.id !== "string") {
+    throw new Error("The server returned an invalid test identifier.");
+  }
+
+  return data.test.id;
 }
 
-export async function deleteTest(sysId: string): Promise<void> {
+export interface ResultsResponse {
+  status: string;
+  results: TestResult[];
+}
+
+export async function getResults(
+  runId: string | undefined,
+  submittedUrl: string,
+): Promise<ResultsResponse> {
+  if (IS_GITHUB_PAGES) {
+    return {
+      status: "completed",
+      results: [
+        {
+          sys_id: `demo-result-1-${submittedUrl}`,
+          test_url: submittedUrl,
+          test_type: "site",
+          issue: "Images should have alternative text",
+          issue_type: "error",
+          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
+          severity: "high",
+          screenshot: "",
+        },
+        {
+          sys_id: `demo-result-2-${submittedUrl}`,
+          test_url: submittedUrl,
+          test_type: "site",
+          issue: "Form controls should have accessible labels",
+          issue_type: "warning",
+          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/labels-or-instructions.html",
+          severity: "medium",
+          screenshot: "",
+        },
+        {
+          sys_id: `demo-result-3-${submittedUrl}`,
+          test_url: submittedUrl,
+          test_type: "site",
+          issue: "Page should contain a descriptive title",
+          issue_type: "notice",
+          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/page-titled.html",
+          severity: "low",
+          screenshot: "",
+        },
+      ],
+    };
+  }
+
+  if (!runId) {
+    throw new Error("Test identifier is missing.");
+  }
+
+  const resp = await fetch(
+    `/api/tests/${encodeURIComponent(runId)}/results`,
+    {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    },
+  );
+
+  if (!resp.ok) {
+    let message = `Failed to load results: ${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error?.message) message = data.error.message;
+    } catch {
+      // Keep the safe generic message.
+    }
+    throw new Error(message);
+  }
+
+  const data = await resp.json();
+
+  return {
+    status: typeof data.status === "string" ? data.status : "failed",
+    results: (data.findings || []).map((finding: {
+      id: string;
+      pageUrl: string;
+      testType: string;
+      issue: string;
+      issueType: string;
+      severity: string | null;
+      fixReference: string | null;
+      screenshotUrl: string | null;
+    }) => ({
+      sys_id: finding.id,
+      test_url: finding.pageUrl,
+      test_type: finding.testType,
+      issue: finding.issue,
+      issue_type: finding.issueType,
+      fix_reference: finding.fixReference ?? "",
+      severity: finding.severity ?? "",
+      screenshot: finding.screenshotUrl ?? "",
+    })),
+  };
+}
+
+export async function deleteTest(id: string): Promise<void> {
   if (IS_GITHUB_PAGES) {
     try {
       const existingHistory = JSON.parse(
         localStorage.getItem("accessibilityTestHistory") || "[]"
       );
       const updatedHistory = existingHistory.filter(
-        (item: HistoryRecord) => item.sys_id !== sysId
+        (item: HistoryRecord) => item.sys_id !== id
       );
       localStorage.setItem(
         "accessibilityTestHistory",
@@ -200,14 +217,21 @@ export async function deleteTest(sysId: string): Promise<void> {
     return;
   }
 
-  const token = getCsrfToken();
-  if (!token) throw new Error("Security token missing. Please reload.");
-
-  const resp = await fetch(`${TABLE_API}/${sysId}`, {
+  const resp = await fetch(`/api/tests/${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: { "X-UserToken": token, Accept: "application/json" },
+    headers: { Accept: "application/json" },
   });
-  if (!resp.ok) throw new Error("Delete failed: " + resp.status);
+
+  if (!resp.ok) {
+    let message = `Delete failed: ${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error?.message) message = data.error.message;
+    } catch {
+      // Keep the safe generic message.
+    }
+    throw new Error(message);
+  }
 }
 
 export async function retestTest(record: HistoryRecord): Promise<void> {
@@ -236,24 +260,22 @@ export async function retestTest(record: HistoryRecord): Promise<void> {
     return;
   }
 
-  const token = getCsrfToken();
-  if (!token) throw new Error("Security token missing. Please reload.");
-
-  const resp = await fetch(TABLE_API, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-UserToken": token,
-      Accept: "application/json",
+  const resp = await fetch(
+    `/api/tests/${encodeURIComponent(record.sys_id)}/retests`,
+    {
+      method: "POST",
+      headers: { Accept: "application/json" },
     },
-    body: JSON.stringify({
-      url: record.url,
-      name: "Re-Test - " + record.url,
-      browser: record.browser,
-      wcag_standard: record.wcag_standard,
-      status: "pending",
-      notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
-    }),
-  });
-  if (!resp.ok) throw new Error("Re-test failed: " + resp.status);
+  );
+
+  if (!resp.ok) {
+    let message = `Re-test failed: ${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (data?.error?.message) message = data.error.message;
+    } catch {
+      // Keep the safe generic message.
+    }
+    throw new Error(message);
+  }
 }

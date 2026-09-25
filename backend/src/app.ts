@@ -66,7 +66,7 @@ export function createApp(service: TestService) {
     }
     if (path === "/api/tests" && request.method === "POST") {
       queryKeys(url.searchParams, []);
-      await service.submit(scanRequest(await readJson(request)));
+      json(response, 202, await service.submit(scanRequest(await readJson(request))));
       return;
     }
     noBody(request);
@@ -82,7 +82,7 @@ export function createApp(service: TestService) {
       return;
     }
     queryKeys(url.searchParams, []);
-    if (match![2] === "retests") { await service.retest(id); return; }
+    if (match![2] === "retests") { json(response, 202, await service.retest(id)); return; }
     if (request.method === "DELETE") {
       await service.delete(id);
       response.writeHead(204);

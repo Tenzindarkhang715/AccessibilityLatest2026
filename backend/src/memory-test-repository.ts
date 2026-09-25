@@ -16,6 +16,18 @@ export class MemoryTestRepository implements TestRepository {
     this.records.set(record.test.id, structuredClone(record));
   }
 
+  async replace(record: StoredTest): Promise<boolean> {
+    if (!this.records.has(record.test.id)) return false;
+    if (record.findings.some(finding => finding.testId !== record.test.id)) {
+      throw new Error("Finding belongs to another test.");
+    }
+    if (record.test.status !== "completed" && record.findings.length > 0) {
+      throw new Error("Only completed runs may publish findings.");
+    }
+    this.records.set(record.test.id, structuredClone(record));
+    return true;
+  }
+
   async get(id: string): Promise<StoredTest | undefined> {
     const record = this.records.get(id);
     return record ? structuredClone(record) : undefined;

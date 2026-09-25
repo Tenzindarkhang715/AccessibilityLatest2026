@@ -9,6 +9,8 @@ export interface StoredTest {
 export interface TestRepository {
   /** Insert only; must not overwrite existing IDs. Not exposed as an HTTP route. */
   insert(record: StoredTest): Promise<void>;
+  /** Replace one existing run/findings snapshot atomically. Returns false if it was deleted. */
+  replace(record: StoredTest): Promise<boolean>;
   get(id: string): Promise<StoredTest | undefined>;
   /** Submission time descending, then ID ascending for ties. */
   recent(limit: number): Promise<TestRun[]>;

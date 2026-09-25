@@ -16,6 +16,26 @@ const browserEntry = fileURLToPath(new URL("./browser-entry.mjs", import.meta.ur
 const browserExecutable = "/opt/scanner-runtime/chromium-1243/chrome-linux-arm64/chrome";
 const fail = message => { throw new Error(message); };
 
+const SCANNER_ERROR_CODES = new Set([
+  "UNSUPPORTED_SCAN_OPTIONS",
+  "TARGET_NOT_ALLOWED",
+  "CANCELLED",
+  "SCAN_TIMEOUT",
+  "ENGINE_FAILURE",
+  "FIXTURE_LOAD_FAILED",
+]);
+
+export function scannerErrorWire(code) {
+  if (!SCANNER_ERROR_CODES.has(code)) {
+    return null;
+  }
+
+  return Object.freeze({
+    type: "scanner",
+    code,
+  });
+}
+
 export const PHASES = Object.freeze(["prerequisites", "configuration", "namespaces", "links", "routes",
   "syntax", "application", "readback", "identities", "fixtures", "proxy", "readiness", "probes"]);
 

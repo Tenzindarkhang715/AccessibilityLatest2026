@@ -1,5 +1,6 @@
 import { createApp } from "./app.js";
 import { MemoryTestRepository } from "./memory-test-repository.js";
+import { createScannerIpcClient } from "./scanner-ipc.js";
 import { TestService } from "./test-service.js";
 
 const host = process.env.HOST ?? "127.0.0.1";
@@ -12,7 +13,14 @@ if (!host.trim() || host !== host.trim() || !/^\d+$/.test(portText)
   process.exit(1);
 }
 
-const server = createApp(new TestService(new MemoryTestRepository()));
+const scannerSocketPath = process.env.SCANNER_SOCKET_PATH?.trim() || undefined;
+const scanner = scannerSocketPath
+  ? createScannerIpcClient({ socketPath: scannerSocketPath })
+  : undefined;
+
+const server = createApp(
+  new TestService(new MemoryTestRepository(), scanner),
+);
 
 server.on("error", () => {
   console.error("Backend server failed to start or encountered a server error.");

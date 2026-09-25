@@ -1,15 +1,84 @@
+import { randomUUID } from "node:crypto";
 import { ApiError, invalid } from "./api-error.js";
-import type { ResultsResponse, ScanRequest } from "./models.js";
+import type { Finding, ResultsResponse, ScanRequest, TestRun } from "./models.js";
+import { ScannerError, type AccessibilityScanner, type FindingDraft } from "./scanner.js";
 import type { TestRepository } from "./test-repository.js";
 import { scanRequest } from "./validation.js";
 
-export class TestService {
-  constructor(private readonly repository: TestRepository) {}
+function executionRequest(request: ScanRequest): ScanRequest {
+  const browsers = request.browsers.length === 1 && /^Chrome(?:\s|$)/i.test(request.browsers[0])
+    ? ["chromium"] : [...request.browsers];
+  return { ...request, browsers };
+}
 
-  async submit(request: ScanRequest): Promise<never> {
+function publishedFinding(testId: string, draft: FindingDraft): Finding {
+  return {
+    id: randomUUID(), testId, pageUrl: draft.pageUrl, issue: draft.issue,
+    issueType: draft.issueType, severity: draft.severity,
+    fixReference: draft.fixReference, screenshotId: draft.screenshotId,
+  };
+}
+
+function safeFailure(error: unknown): { code: string; message: string } {
+  if (error instanceof ScannerError) {
+    const messages: Record<ScannerError["code"], string> = {
+      UNSUPPORTED_SCAN_OPTIONS: "The requested scan options are not supported.",
+      TARGET_NOT_ALLOWED: "The requested target is not allowed.",
+      CANCELLED: "The accessibility scan was cancelled.",
+      SCAN_TIMEOUT: "The accessibility scan timed out.",
+      ENGINE_FAILURE: "The accessibility scanning engine failed.",
+      FIXTURE_LOAD_FAILED: "The accessibility scan input could not be loaded.",
+    };
+    return { code: error.code, message: messages[error.code] };
+  }
+  return { code: "INTERNAL_ERROR", message: "Accessibility scanning failed." };
+}
+
+export class TestService {
+  constructor(private readonly repository: TestRepository,
+    private readonly scanner?: AccessibilityScanner) {}
+
+  async submit(request: ScanRequest, retestOfId: string | null = null) {
     scanRequest(request);
-    // No ID allocation or persistence until a real execution path can accept work.
-    throw new ApiError(503, "SCANNER_UNAVAILABLE", "Accessibility scanning is unavailable.");
+    if (!this.scanner) {
+      throw new ApiError(503, "SCANNER_UNAVAILABLE", "Accessibility scanning is unavailable.");
+    }
+
+    const test: TestRun = {
+      ...request, id: randomUUID(), status: "pending",
+      submittedAt: new Date().toISOString(), completedAt: null,
+      retestOfId, failure: null,
+    };
+    await this.repository.insert({ test, findings: [] });
+
+    // Acceptance is returned immediately. Execution owns all later lifecycle transitions.
+    queueMicrotask(() => { void this.execute(test).catch(() => {}); });
+    return { test };
+  }
+
+  private async execute(accepted: TestRun): Promise<void> {
+    if (!this.scanner) return;
+    const running: TestRun = { ...accepted, status: "in_progress" };
+    if (!await this.repository.replace({ test: running, findings: [] })) return;
+
+    try {
+      const outcome = await this.scanner.scan(executionRequest(accepted), {
+        signal: new AbortController().signal,
+      });
+      const completed: TestRun = {
+        ...running, status: "completed", completedAt: new Date().toISOString(), failure: null,
+      };
+      await this.repository.replace({
+        test: completed,
+        findings: outcome.findings.map(draft => publishedFinding(accepted.id, draft)),
+      });
+    } catch (error) {
+      const failed: TestRun = {
+        ...running, status: "failed", completedAt: new Date().toISOString(),
+        failure: safeFailure(error),
+      };
+      await this.repository.replace({ test: failed, findings: [] });
+    }
   }
 
   async recent(limit: number) {
@@ -55,9 +124,9 @@ export class TestService {
     if (!await this.repository.delete(id)) throw new ApiError(404, "NOT_FOUND", "Test not found.");
   }
 
-  async retest(id: string): Promise<never> {
+  async retest(id: string) {
     const { test } = await this.requireTest(id);
     return this.submit({ url: test.url, testType: test.testType,
-      browsers: test.browsers, wcagStandard: test.wcagStandard });
+      browsers: test.browsers, wcagStandard: test.wcagStandard }, id);
   }
 }

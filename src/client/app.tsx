@@ -108,8 +108,17 @@ export default function App() {
 
     const standard = wcagLabel(wcag);
     try {
-      await submitTest({ type, value, browsers, wcag }, standard);
-      const submitData: SubmitResult = { type, value, browsers, wcag };
+      const runId = await submitTest(
+        { type, value, browsers, wcag },
+        standard,
+      );
+      const submitData: SubmitResult = {
+        type,
+        value,
+        browsers,
+        wcag,
+        runId,
+      };
       setSubmitted(submitData);
       setView("success");
       fetchHistory(); // refresh history after successful submission
@@ -183,7 +192,11 @@ export default function App() {
         {error && <ErrorBanner message={error} onDismiss={dismissError} />}
 
         {view === "results" && submitted ? (
-          <ResultsPanel submittedUrl={submitted.value} onBack={handleReset} />
+          <ResultsPanel
+            submittedUrl={submitted.value}
+            runId={submitted.runId}
+            onBack={handleReset}
+          />
         ) : view === "success" && submitted ? (
           <SuccessView submitted={submitted} onReset={handleReset} onViewResults={handleViewResults} />
         ) : (
@@ -505,16 +518,24 @@ function SuccessView({
 }
 
 /* ── Results Panel ── */
-function ResultsPanel({ submittedUrl, onBack }: { submittedUrl: string; onBack: () => void }) {
+function ResultsPanel({
+  submittedUrl,
+  runId,
+  onBack,
+}: {
+  submittedUrl: string;
+  runId?: string;
+  onBack: () => void;
+}) {
   const [results, setResults] = useState<TestResult[]>([]);
   const [resultsLoading, setResultsLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 5;
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchResults = useCallback(async (): Promise<TestResult[]> => {
-    return getResults(submittedUrl);
-  }, [submittedUrl]);
+  const fetchResults = useCallback(async () => {
+    return getResults(runId, submittedUrl);
+  }, [runId, submittedUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -524,8 +545,12 @@ function ResultsPanel({ submittedUrl, onBack }: { submittedUrl: string; onBack: 
       try {
         const data = await fetchResults();
         if (cancelled) return;
-        if (data.length > 0) {
-          setResults(data);
+
+        if (data.status === "completed") {
+          setResults(data.results);
+          setResultsLoading(false);
+        } else if (data.status === "failed") {
+          setResults([]);
           setResultsLoading(false);
         } else if (currentRetry < maxRetries) {
           setRetryCount(currentRetry + 1);
