@@ -10,6 +10,9 @@ const network = Object.freeze({
   uplinkInterface: "enp0s1",
   gatewayAddress: "192.168.64.1",
   resolverAddress: "192.168.64.1",
+  deploymentExclusions: Object.freeze([
+    "192.168.64.0/24",
+  ]),
 });
 
 function boundary() {
@@ -387,4 +390,55 @@ test("routes worker through proxy and proxy through host boundary", async () => 
   );
 
   await instance.close();
+});
+
+test("installs rendered nftables policy inside worker and proxy namespaces", async () => {
+  const calls = [];
+  const runner = async (file, args, options = {}) => {
+    calls.push([file, args, options]);
+    return "";
+  };
+
+  const instance = new ProductionLinuxBoundary(
+    {
+      network,
+    },
+    {
+      runner,
+    },
+  );
+
+  await instance.installNamespacePolicy();
+
+  assert.equal(calls.length, 2);
+
+  assert.deepEqual(calls[0], [
+    "ip",
+    [
+      "netns",
+      "exec",
+      instance.ns.worker,
+      "nft",
+      "--file",
+      "-",
+    ],
+    {
+      input: instance.renderedPolicy.worker,
+    },
+  ]);
+
+  assert.deepEqual(calls[1], [
+    "ip",
+    [
+      "netns",
+      "exec",
+      instance.ns.proxy,
+      "nft",
+      "--file",
+      "-",
+    ],
+    {
+      input: instance.renderedPolicy.proxy,
+    },
+  ]);
 });

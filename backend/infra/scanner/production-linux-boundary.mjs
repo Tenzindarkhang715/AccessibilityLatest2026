@@ -5,6 +5,9 @@ import {
   command,
   verifySupervisor,
 } from "./linux-boundary.mjs";
+import {
+  renderNetworkPolicy,
+} from "./network-policy.mjs";
 
 import {
   productionNetworkConfigFromEnvironment,
@@ -12,6 +15,9 @@ import {
 import {
   productionPolicyModel,
 } from "./production-network-policy.mjs";
+import {
+  renderProductionNamespaceNetworkPolicy,
+} from "./production-namespace-network-policy.mjs";
 import {
   productionTopology,
 } from "./production-topology.mjs";
@@ -82,6 +88,41 @@ export class ProductionLinuxBoundary {
         this.topology.proxyPort,
       resolverAddress:
         this.network.resolverAddress,
+    });
+
+    this.renderedPolicy =
+      renderProductionNamespaceNetworkPolicy({
+        workerAddress:
+          this.topology.workerAddress.split("/")[0],
+        proxyAddress:
+          this.topology.proxyWorkerAddress.split("/")[0],
+        resolverAddress:
+          this.network.resolverAddress,
+        proxyPort:
+          this.topology.proxyPort,
+        workerInterface: "worker0",
+        proxyWorkerInterface: "peer0",
+        proxyUpstreamInterface: "upstream0",
+        deploymentExclusions:
+          this.network.deploymentExclusions,
+        profile: "ipv4-only",
+      });
+
+    this.renderedPolicy = renderNetworkPolicy({
+      profile: "ipv4-only",
+      workerAddress:
+        this.topology.workerAddress.split("/")[0],
+      proxyAddress:
+        this.topology.proxyWorkerAddress.split("/")[0],
+      resolverAddress:
+        this.network.resolverAddress,
+      proxyPort:
+        this.topology.proxyPort,
+      workerInterface: "worker0",
+      proxyWorkerInterface: "peer0",
+      proxyUpstreamInterface: "upstream0",
+      deploymentExclusions:
+        this.network.deploymentExclusions,
     });
 
     const token = randomBytes(6).toString("hex");
@@ -303,6 +344,32 @@ export class ProductionLinuxBoundary {
         this.hostInterface,
         "up",
       ],
+    );
+  }
+
+  nft(namespace, args, options = {}) {
+    return this.run(
+      "ip",
+      ["netns", "exec", namespace, "nft", ...args],
+      options,
+    );
+  }
+
+  async installNamespacePolicy() {
+    await this.nft(
+      this.ns.worker,
+      ["--file", "-"],
+      {
+        input: this.renderedPolicy.worker,
+      },
+    );
+
+    await this.nft(
+      this.ns.proxy,
+      ["--file", "-"],
+      {
+        input: this.renderedPolicy.proxy,
+      },
     );
   }
 
