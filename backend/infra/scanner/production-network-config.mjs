@@ -35,12 +35,47 @@ function interfaceName(value) {
   return value;
 }
 
+
+function ipv4Number(value) {
+  return value
+    .split(".")
+    .reduce(
+      (number, octet) => number * 256 + Number(octet),
+      0,
+    );
+}
+
+function ipv4Cidr(value) {
+  if (typeof value !== "string") {
+    fail();
+  }
+
+  const parts = value.split("/");
+  if (
+    parts.length !== 2 ||
+    isIP(parts[0]) !== 4 ||
+    !/^(?:0|[1-9]|[12][0-9]|3[0-2])$/.test(parts[1])
+  ) {
+    fail();
+  }
+
+  const prefix = Number(parts[1]);
+  const size = 2 ** (32 - prefix);
+
+  if (ipv4Number(parts[0]) % size !== 0) {
+    fail();
+  }
+
+  return value;
+}
+
 export function validateProductionNetworkConfig(input) {
   const keys = [
     "profile",
     "uplinkInterface",
     "gatewayAddress",
     "resolverAddress",
+    "deploymentExclusions",
   ];
 
   if (
@@ -66,6 +101,18 @@ export function validateProductionNetworkConfig(input) {
     ipv4(input.resolverAddress);
 
   if (
+    !Array.isArray(input.deploymentExclusions) ||
+    input.deploymentExclusions.length === 0 ||
+    input.deploymentExclusions.length > 1024
+  ) {
+    fail();
+  }
+
+  const deploymentExclusions = Object.freeze(
+    [...new Set(input.deploymentExclusions.map(ipv4Cidr))].sort(),
+  );
+
+  if (
     gatewayAddress === "0.0.0.0" ||
     resolverAddress === "0.0.0.0" ||
     gatewayAddress.startsWith("127.") ||
@@ -79,6 +126,7 @@ export function validateProductionNetworkConfig(input) {
     uplinkInterface,
     gatewayAddress,
     resolverAddress,
+    deploymentExclusions,
   });
 }
 
@@ -93,5 +141,12 @@ export function productionNetworkConfigFromEnvironment(
       env.SCANNER_UPLINK_GATEWAY,
     resolverAddress:
       env.SCANNER_UPSTREAM_DNS,
+    deploymentExclusions:
+      typeof env.SCANNER_DEPLOYMENT_EXCLUSIONS === "string"
+        ? env.SCANNER_DEPLOYMENT_EXCLUSIONS
+            .split(",")
+            .map(value => value.trim())
+            .filter(Boolean)
+        : undefined,
   });
 }

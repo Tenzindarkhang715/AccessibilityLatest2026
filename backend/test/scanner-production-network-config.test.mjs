@@ -11,6 +11,7 @@ const valid = () => ({
   uplinkInterface: "enp0s1",
   gatewayAddress: "192.168.64.1",
   resolverAddress: "192.168.64.1",
+  deploymentExclusions: ["192.168.64.0/24"],
 });
 
 test("accepts an exact IPv4 production network configuration", () => {
@@ -26,6 +27,7 @@ test("loads trusted production network configuration from environment", () => {
       SCANNER_UPLINK_INTERFACE: "enp0s1",
       SCANNER_UPLINK_GATEWAY: "192.168.64.1",
       SCANNER_UPSTREAM_DNS: "192.168.64.1",
+      SCANNER_DEPLOYMENT_EXCLUSIONS: "192.168.64.0/24",
     }),
     valid(),
   );
@@ -92,6 +94,38 @@ test("rejects unsafe interface names and loopback DNS or gateway", () => {
       validateProductionNetworkConfig({
         ...valid(),
         resolverAddress,
+      }),
+    );
+  }
+});
+
+
+test("normalizes deployment exclusions and rejects invalid CIDRs", () => {
+  const config = validateProductionNetworkConfig({
+    ...valid(),
+    deploymentExclusions: [
+      "192.168.64.0/24",
+      "10.20.0.0/16",
+      "192.168.64.0/24",
+    ],
+  });
+
+  assert.deepEqual(
+    config.deploymentExclusions,
+    ["10.20.0.0/16", "192.168.64.0/24"],
+  );
+
+  for (const deploymentExclusions of [
+    [],
+    ["999.999.999.999/24"],
+    ["192.168.64.2/24"],
+    ["192.168.64.0/33"],
+    ["not-a-cidr"],
+  ]) {
+    assert.throws(() =>
+      validateProductionNetworkConfig({
+        ...valid(),
+        deploymentExclusions,
       }),
     );
   }
