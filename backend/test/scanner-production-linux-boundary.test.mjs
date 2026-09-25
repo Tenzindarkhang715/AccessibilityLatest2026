@@ -326,3 +326,65 @@ test("refuses to delete a namespace that still contains processes", async () => 
     },
   );
 });
+
+test("routes worker through proxy and proxy through host boundary", async () => {
+  const calls = [];
+
+  const runner = async (file, args) => {
+    calls.push([file, args]);
+    return "";
+  };
+
+  const instance = new ProductionLinuxBoundary(
+    {
+      network,
+    },
+    {
+      runner,
+    },
+  );
+
+  await instance.createRoutes();
+
+  assert.deepEqual(calls, [
+    [
+      "ip",
+      [
+        "-n",
+        instance.ns.worker,
+        "route",
+        "add",
+        "default",
+        "via",
+        "10.89.0.1",
+        "dev",
+        "worker0",
+      ],
+    ],
+    [
+      "ip",
+      [
+        "-n",
+        instance.ns.proxy,
+        "route",
+        "add",
+        "default",
+        "via",
+        "10.89.1.1",
+        "dev",
+        "upstream0",
+      ],
+    ],
+  ]);
+
+  assert.equal(
+    calls.some(
+      ([, args]) =>
+        args[0] === "route" &&
+        args.includes("default"),
+    ),
+    false,
+  );
+
+  await instance.close();
+});

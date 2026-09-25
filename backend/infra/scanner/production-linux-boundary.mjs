@@ -306,6 +306,36 @@ export class ProductionLinuxBoundary {
     );
   }
 
+  async createRoutes() {
+    const workerGateway =
+      this.topology.proxyWorkerAddress.split("/")[0];
+
+    const proxyGateway =
+      this.topology.hostBoundaryAddress.split("/")[0];
+
+    await this.ip(
+      this.ns.worker,
+      "route",
+      "add",
+      "default",
+      "via",
+      workerGateway,
+      "dev",
+      "worker0",
+    );
+
+    await this.ip(
+      this.ns.proxy,
+      "route",
+      "add",
+      "default",
+      "via",
+      proxyGateway,
+      "dev",
+      "upstream0",
+    );
+  }
+
   async start() {
     if (this.started || this.closing) {
       fail("Boundary already used");
@@ -316,10 +346,11 @@ export class ProductionLinuxBoundary {
     try {
       await this.prerequisites();
       await this.createNetworkTopology();
+      await this.createRoutes();
 
       /*
-       * Routes, nftables, cgroups and workloads are installed
-       * in subsequent layers. Readiness remains false until the
+       * nftables, cgroups and workloads are installed in
+       * subsequent layers. Readiness remains false until the
        * complete security boundary exists.
        */
       this.ready = false;
