@@ -1,12 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import "./app.css";
-
-const TABLE_API = "/api/now/table/x_2191106_test_age_url_test";
-const RESULTS_API = "/api/now/table/x_2191106_test_age_test_result";
-const IS_GITHUB_PAGES =
-  window.location.hostname === "tenzindarkhang715.github.io" ||
-  window.location.hostname === "localhost" ||
-  window.location.hostname === "127.0.0.1";
+import { submitTest, getRecentTests, getResults, deleteTest, retestTest } from "./services/test-service";
+import type { SubmitResult, HistoryRecord, TestResult } from "./services/test-service";
 
 const URL_PATTERN = /^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+/;
 
@@ -37,42 +32,6 @@ const WCAG_OPTIONS = [
 const wcagLabel = (val: string) =>
   WCAG_OPTIONS.flatMap((g) => g.items).find((i) => i.value === val)?.label || val;
 
-/** Safely retrieve the CSRF token from the global scope. */
-function getCsrfToken(): string {
-  const w = window as unknown as Record<string, unknown>;
-  if (typeof w.g_ck === "string" && w.g_ck.length > 0) {
-    return w.g_ck;
-  }
-  return "";
-}
-
-interface SubmitResult {
-  type: "site" | "page";
-  value: string;
-  browsers: string[];
-  wcag: string;
-}
-
-interface HistoryRecord {
-  sys_id: string;
-  url: string;
-  wcag_standard: string;
-  browser: string;
-  status: string;
-  sys_created_on: string;
-}
-
-interface TestResult {
-  sys_id: string;
-  test_url: string;
-  test_type: string;
-  issue: string;
-  issue_type: string;
-  fix_reference: string;
-  severity: string;
-  screenshot: string;
-}
-
 type AppView = "form" | "success" | "results";
 
 export default function App() {
@@ -102,30 +61,8 @@ export default function App() {
     setHistoryLoading(true);
   
     try {
-      // GitHub Pages Demo Mode
-      if (IS_GITHUB_PAGES) {
-        const savedHistory = JSON.parse(
-          localStorage.getItem("accessibilityTestHistory") || "[]"
-        );
-  
-        setHistory(savedHistory);
-        return;
-      }
-  
-      // Existing ServiceNow behavior
-      const token = getCsrfToken();
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (token) headers["X-UserToken"] = token;
-  
-      const resp = await fetch(
-        `${TABLE_API}?sysparm_limit=10&sysparm_order_by=-sys_created_on&sysparm_display_value=true`,
-        { method: "GET", headers },
-      );
-  
-      if (resp.ok) {
-        const data = await resp.json();
-        setHistory(data.result || []);
-      }
+      const records = await getRecentTests();
+      if (records !== undefined) setHistory(records);
     } catch {
       /* silently ignore history fetch errors */
     } finally {
@@ -171,77 +108,17 @@ export default function App() {
 
     const standard = wcagLabel(wcag);
     try {
-      // GitHub Pages Demo Mode
-      if (IS_GITHUB_PAGES) {
-        const demoTest = {
-          sys_id: Date.now().toString(),
-          url: value,
-          name: (type === "site" ? "Site Test - " : "Page Test - ") + value,
-          browser: browsers.join(", "),
-          wcag_standard: wcag,
-          status: "completed",
-          notes:
-            `Test against ${standard}. ` +
-            (type === "site"
-              ? "Full website accessibility test."
-              : "Single page accessibility test.") +
-            ` Browsers: ${browsers.join(", ")}.`,
-          sys_created_on: new Date().toISOString(),
-        };
-    
-        const existingHistory = JSON.parse(
-          localStorage.getItem("accessibilityTestHistory") || "[]"
-        );
-    
-        localStorage.setItem(
-          "accessibilityTestHistory",
-          JSON.stringify([demoTest, ...existingHistory])
-        );
-    
-        const submitData: SubmitResult = { type, value, browsers, wcag };
-        setSubmitted(submitData);
-        setView("success");
-    
-        fetchHistory();
-    
-        transitionTimer.current = setTimeout(() => {
-          setView("results");
-        }, 2000);
-    
-        return;
-      }
-    
-      // Existing ServiceNow behavior
-      const token = getCsrfToken();
-      if (!token) {
-        setError("Security token (g_ck) is missing. Please reload the page and try again.");
-        return;
-      }
-
-      const resp = await fetch(TABLE_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-UserToken": token,
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          url: value,
-          name: (type === "site" ? "Site Test - " : "Page Test - ") + value,
-          browser: browsers.join(", "),
-          wcag_standard: wcag,
-          status: "pending",
-          notes:
-            `Test against ${standard}. ` +
-            (type === "site"
-              ? "Full website accessibility test."
-              : "Single page accessibility test.") +
-            ` Browsers: ${browsers.join(", ")}.`,
-        }),
-      });
-    
-      if (!resp.ok) throw new Error("Failed to submit: " + resp.status);
-      const submitData: SubmitResult = { type, value, browsers, wcag };
+      const runId = await submitTest(
+        { type, value, browsers, wcag },
+        standard,
+      );
+      const submitData: SubmitResult = {
+        type,
+        value,
+        browsers,
+        wcag,
+        runId,
+      };
       setSubmitted(submitData);
       setView("success");
       fetchHistory(); // refresh history after successful submission
@@ -281,45 +158,8 @@ export default function App() {
   const dismissError = () => setError(null);
 
   const handleDeleteTest = async (sysId: string) => {
-    // GitHub Pages Demo Mode
-    if (IS_GITHUB_PAGES) {
-      try {
-        const existingHistory = JSON.parse(
-          localStorage.getItem("accessibilityTestHistory") || "[]"
-        );
-  
-        const updatedHistory = existingHistory.filter(
-          (item: HistoryRecord) => item.sys_id !== sysId
-        );
-  
-        localStorage.setItem(
-          "accessibilityTestHistory",
-          JSON.stringify(updatedHistory)
-        );
-  
-        fetchHistory();
-      } catch {
-        setError("Failed to delete test");
-      }
-  
-      return;
-    }
-  
-    // Existing ServiceNow behavior
-    const token = getCsrfToken();
-    if (!token) {
-      setError("Security token missing. Please reload.");
-      return;
-    }
-  
     try {
-      const resp = await fetch(`${TABLE_API}/${sysId}`, {
-        method: "DELETE",
-        headers: { "X-UserToken": token, Accept: "application/json" },
-      });
-  
-      if (!resp.ok) throw new Error("Delete failed: " + resp.status);
-  
+      await deleteTest(sysId);
       fetchHistory();
     } catch (err: unknown) {
       setError(
@@ -329,71 +169,15 @@ export default function App() {
   };
 
   const handleRetestTest = async (record: HistoryRecord) => {
-  // GitHub Pages Demo Mode
-  if (IS_GITHUB_PAGES) {
     try {
-      const demoTest = {
-        sys_id: Date.now().toString(),
-        url: record.url,
-        name: "Re-Test - " + record.url,
-        browser: record.browser,
-        wcag_standard: record.wcag_standard,
-        status: "completed",
-        notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
-        sys_created_on: new Date().toISOString(),
-      };
-
-      const existingHistory = JSON.parse(
-        localStorage.getItem("accessibilityTestHistory") || "[]"
-      );
-
-      localStorage.setItem(
-        "accessibilityTestHistory",
-        JSON.stringify([demoTest, ...existingHistory])
-      );
-
+      await retestTest(record);
       fetchHistory();
-    } catch {
-      setError("Failed to re-test");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Failed to re-test"
+      );
     }
-
-    return;
-  }
-
-  // Existing ServiceNow behavior
-  const token = getCsrfToken();
-  if (!token) {
-    setError("Security token missing. Please reload.");
-    return;
-  }
-
-  try {
-    const resp = await fetch(TABLE_API, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-UserToken": token,
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        url: record.url,
-        name: "Re-Test - " + record.url,
-        browser: record.browser,
-        wcag_standard: record.wcag_standard,
-        status: "pending",
-        notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
-      }),
-    });
-
-    if (!resp.ok) throw new Error("Re-test failed: " + resp.status);
-
-    fetchHistory();
-  } catch (err: unknown) {
-    setError(
-      err instanceof Error ? err.message : "Failed to re-test"
-    );
-  }
-};
+  };
 
   return (
     <div className="app-container">
@@ -408,7 +192,11 @@ export default function App() {
         {error && <ErrorBanner message={error} onDismiss={dismissError} />}
 
         {view === "results" && submitted ? (
-          <ResultsPanel submittedUrl={submitted.value} onBack={handleReset} />
+          <ResultsPanel
+            submittedUrl={submitted.value}
+            runId={submitted.runId}
+            onBack={handleReset}
+          />
         ) : view === "success" && submitted ? (
           <SuccessView submitted={submitted} onReset={handleReset} onViewResults={handleViewResults} />
         ) : (
@@ -730,64 +518,24 @@ function SuccessView({
 }
 
 /* ── Results Panel ── */
-function ResultsPanel({ submittedUrl, onBack }: { submittedUrl: string; onBack: () => void }) {
+function ResultsPanel({
+  submittedUrl,
+  runId,
+  onBack,
+}: {
+  submittedUrl: string;
+  runId?: string;
+  onBack: () => void;
+}) {
   const [results, setResults] = useState<TestResult[]>([]);
   const [resultsLoading, setResultsLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 5;
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchResults = useCallback(async (): Promise<TestResult[]> => {
-    // GitHub Pages Demo Mode: return representative local demo results.
-    // ServiceNow behavior below remains unchanged.
-    if (IS_GITHUB_PAGES) {
-      return [
-        {
-          sys_id: `demo-result-1-${submittedUrl}`,
-          test_url: submittedUrl,
-          test_type: "site",
-          issue: "Images should have alternative text",
-          issue_type: "error",
-          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
-          severity: "high",
-          screenshot: "",
-        },
-        {
-          sys_id: `demo-result-2-${submittedUrl}`,
-          test_url: submittedUrl,
-          test_type: "site",
-          issue: "Form controls should have accessible labels",
-          issue_type: "warning",
-          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/labels-or-instructions.html",
-          severity: "medium",
-          screenshot: "",
-        },
-        {
-          sys_id: `demo-result-3-${submittedUrl}`,
-          test_url: submittedUrl,
-          test_type: "site",
-          issue: "Page should contain a descriptive title",
-          issue_type: "notice",
-          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/page-titled.html",
-          severity: "low",
-          screenshot: "",
-        },
-      ];
-    }
-
-    const token = getCsrfToken();
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (token) headers["X-UserToken"] = token;
-
-    const query = encodeURIComponent(`test_url=${submittedUrl}`);
-    const resp = await fetch(
-      `${RESULTS_API}?sysparm_query=${query}&sysparm_display_value=true&sysparm_limit=50`,
-      { method: "GET", headers },
-    );
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return (data.result || []) as TestResult[];
-  }, [submittedUrl]);
+  const fetchResults = useCallback(async () => {
+    return getResults(runId, submittedUrl);
+  }, [runId, submittedUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -797,8 +545,12 @@ function ResultsPanel({ submittedUrl, onBack }: { submittedUrl: string; onBack: 
       try {
         const data = await fetchResults();
         if (cancelled) return;
-        if (data.length > 0) {
-          setResults(data);
+
+        if (data.status === "completed") {
+          setResults(data.results);
+          setResultsLoading(false);
+        } else if (data.status === "failed") {
+          setResults([]);
           setResultsLoading(false);
         } else if (currentRetry < maxRetries) {
           setRetryCount(currentRetry + 1);
