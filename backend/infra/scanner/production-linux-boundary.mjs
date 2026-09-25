@@ -19,6 +19,9 @@ import {
   renderProductionNamespaceNetworkPolicy,
 } from "./production-namespace-network-policy.mjs";
 import {
+  renderProductionHostNetworkPolicy,
+} from "./production-host-network-policy.mjs";
+import {
   productionTopology,
 } from "./production-topology.mjs";
 
@@ -108,23 +111,6 @@ export class ProductionLinuxBoundary {
         profile: "ipv4-only",
       });
 
-    this.renderedPolicy = renderNetworkPolicy({
-      profile: "ipv4-only",
-      workerAddress:
-        this.topology.workerAddress.split("/")[0],
-      proxyAddress:
-        this.topology.proxyWorkerAddress.split("/")[0],
-      resolverAddress:
-        this.network.resolverAddress,
-      proxyPort:
-        this.topology.proxyPort,
-      workerInterface: "worker0",
-      proxyWorkerInterface: "peer0",
-      proxyUpstreamInterface: "upstream0",
-      deploymentExclusions:
-        this.network.deploymentExclusions,
-    });
-
     const token = randomBytes(6).toString("hex");
 
     this.id = `scanner-production-${token}`;
@@ -138,6 +124,17 @@ export class ProductionLinuxBoundary {
      * Only this endpoint remains visible in the host namespace.
      */
     this.hostInterface = `sp${token}`;
+
+    this.renderedHostPolicy =
+      renderProductionHostNetworkPolicy({
+        hostInterface: this.hostInterface,
+        uplinkInterface:
+          this.network.uplinkInterface,
+        proxyAddress:
+          this.topology.proxyUpstreamAddress.split("/")[0],
+        resolverAddress:
+          this.network.resolverAddress,
+      });
 
     this.createdNamespaces = [];
     this.hostLinkCreated = false;
@@ -369,6 +366,16 @@ export class ProductionLinuxBoundary {
       ["--file", "-"],
       {
         input: this.renderedPolicy.proxy,
+      },
+    );
+  }
+
+  async installHostPolicy() {
+    await this.run(
+      "nft",
+      ["--file", "-"],
+      {
+        input: this.renderedHostPolicy,
       },
     );
   }

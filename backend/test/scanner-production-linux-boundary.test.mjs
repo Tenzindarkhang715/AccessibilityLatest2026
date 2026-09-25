@@ -442,3 +442,53 @@ test("installs rendered nftables policy inside worker and proxy namespaces", asy
     },
   ]);
 });
+
+test("installs rendered host forwarding and NAT policy", async () => {
+  const calls = [];
+
+  const runner = async (file, args, options = {}) => {
+    calls.push([file, args, options]);
+    return "";
+  };
+
+  const instance = new ProductionLinuxBoundary(
+    {
+      network: {
+        ...network,
+        deploymentExclusions: [
+          "192.168.64.0/24",
+        ],
+      },
+    },
+    {
+      runner,
+    },
+  );
+
+  await instance.installHostPolicy();
+
+  const call = calls.find(
+    ([file, args]) =>
+      file === "nft" &&
+      args[0] === "--file" &&
+      args[1] === "-",
+  );
+
+  assert.ok(call);
+  assert.match(
+    call[2].input,
+    /table inet scanner_production_host/,
+  );
+  assert.match(
+    call[2].input,
+    /table ip scanner_production_nat/,
+  );
+  assert.match(
+    call[2].input,
+    /10\.89\.1\.2/,
+  );
+  assert.match(
+    call[2].input,
+    /enp0s1/,
+  );
+});
