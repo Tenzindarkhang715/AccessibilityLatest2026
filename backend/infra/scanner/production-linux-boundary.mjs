@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import {
   command,
+  validateCgroupParent,
   verifySupervisor,
 } from "./linux-boundary.mjs";
 import {
@@ -152,6 +153,10 @@ export class ProductionLinuxBoundary {
     ) {
       fail("Production scanner boundary requires opted-in Linux");
     }
+
+    this.cgroupParent = await validateCgroupParent(
+      this.environment.SCANNER_CGROUP_PARENT,
+    );
 
     if (Number(process.versions.node.split(".")[0]) < 24) {
       fail("Node 24 or newer required");
@@ -421,6 +426,8 @@ export class ProductionLinuxBoundary {
       await this.prerequisites();
       await this.createNetworkTopology();
       await this.createRoutes();
+      await this.installNamespacePolicy();
+      await this.installHostPolicy();
 
       /*
        * nftables, cgroups and workloads are installed in
