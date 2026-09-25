@@ -127,3 +127,202 @@ test("an already-aborted scan maps to CANCELLED", async () => {
 
   await instance.close();
 });
+
+test("creates the isolated worker, proxy, and host-boundary topology", async () => {
+  const calls = [];
+
+  const runner = async (file, args) => {
+    calls.push([file, args]);
+    return "";
+  };
+
+  const instance = new ProductionLinuxBoundary(
+    {
+      network,
+    },
+    {
+      runner,
+    },
+  );
+
+  await instance.createNetworkTopology();
+
+  assert.equal(instance.createdNamespaces.length, 2);
+  assert.equal(instance.hostLinkCreated, true);
+
+  assert.ok(
+    calls.some(
+      ([file, args]) =>
+        file === "ip" &&
+        args[0] === "netns" &&
+        args[1] === "add" &&
+        args[2] === instance.ns.worker,
+    ),
+  );
+
+  assert.ok(
+    calls.some(
+      ([file, args]) =>
+        file === "ip" &&
+        args[0] === "netns" &&
+        args[1] === "add" &&
+        args[2] === instance.ns.proxy,
+    ),
+  );
+
+  assert.ok(
+    calls.some(
+      ([file, args]) =>
+        file === "ip" &&
+        args.includes("worker0") &&
+        args.includes("peer0") &&
+        args.includes(instance.ns.proxy),
+    ),
+  );
+
+  assert.ok(
+    calls.some(
+      ([file, args]) =>
+        file === "ip" &&
+        args[0] === "link" &&
+        args[1] === "add" &&
+        args[2] === instance.hostInterface &&
+        args.includes("upstream0"),
+    ),
+  );
+
+  assert.ok(
+    calls.some(
+      ([file, args]) =>
+        file === "ip" &&
+        args.includes(instance.topology.hostBoundaryAddress) &&
+        args.includes(instance.hostInterface),
+    ),
+  );
+
+  assert.ok(instance.hostInterface.length <= 15);
+
+  /*
+   * Prevent this portable command-sequence test from asking close()
+   * to clean up resources that were only simulated by the fake runner.
+   */
+  instance.hostLinkCreated = false;
+  instance.createdNamespaces = [];
+  await instance.close();
+});
+
+test("cleans scanner-owned host link and namespaces in reverse order", async () => {
+  const calls = [];
+
+  const runner = async (file, args) => {
+    calls.push([file, args]);
+
+    if (
+      file === "ip" &&
+      args[0] === "netns" &&
+      args[1] === "pids"
+    ) {
+      return "";
+    }
+
+    return "";
+  };
+
+  const instance = new ProductionLinuxBoundary(
+    {
+      network,
+    },
+    {
+      runner,
+    },
+  );
+
+  instance.hostLinkCreated = true;
+  instance.createdNamespaces = [
+    instance.ns.worker,
+    instance.ns.proxy,
+  ];
+
+  await instance.close();
+
+  const deleteCalls = calls.filter(
+    ([file, args]) =>
+      file === "ip" &&
+      (
+        (
+          args[0] === "link" &&
+          args[1] === "delete"
+        ) ||
+        (
+          args[0] === "netns" &&
+          args[1] === "delete"
+        )
+      ),
+  );
+
+  assert.deepEqual(deleteCalls, [
+    [
+      "ip",
+      [
+        "link",
+        "delete",
+        instance.hostInterface,
+      ],
+    ],
+    [
+      "ip",
+      [
+        "netns",
+        "delete",
+        instance.ns.proxy,
+      ],
+    ],
+    [
+      "ip",
+      [
+        "netns",
+        "delete",
+        instance.ns.worker,
+      ],
+    ],
+  ]);
+});
+
+test("refuses to delete a namespace that still contains processes", async () => {
+  const runner = async (file, args) => {
+    if (
+      file === "ip" &&
+      args[0] === "netns" &&
+      args[1] === "pids"
+    ) {
+      return "4242\n";
+    }
+
+    return "";
+  };
+
+  const instance = new ProductionLinuxBoundary(
+    {
+      network,
+    },
+    {
+      runner,
+    },
+  );
+
+  instance.createdNamespaces = [
+    instance.ns.worker,
+  ];
+
+  await assert.rejects(
+    instance.close(),
+    error => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.match(
+        error.message,
+        /Production boundary cleanup failed/,
+      );
+      return true;
+    },
+  );
+});

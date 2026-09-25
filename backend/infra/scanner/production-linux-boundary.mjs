@@ -84,8 +84,22 @@ export class ProductionLinuxBoundary {
         this.network.resolverAddress,
     });
 
-    this.id =
-      `scanner-production-${randomBytes(6).toString("hex")}`;
+    const token = randomBytes(6).toString("hex");
+
+    this.id = `scanner-production-${token}`;
+    this.ns = Object.freeze({
+      worker: `${this.id}-w`,
+      proxy: `${this.id}-p`,
+    });
+
+    /*
+     * Linux interface names are limited to IFNAMSIZ-1 (15) bytes.
+     * Only this endpoint remains visible in the host namespace.
+     */
+    this.hostInterface = `sp${token}`;
+
+    this.createdNamespaces = [];
+    this.hostLinkCreated = false;
 
     this.started = false;
     this.ready = false;
@@ -154,6 +168,144 @@ export class ProductionLinuxBoundary {
     }
   }
 
+  ip(namespace, ...args) {
+    return this.run(
+      "ip",
+      ["-n", namespace, ...args],
+    );
+  }
+
+  async createNetworkTopology() {
+    const worker = this.ns.worker;
+    const proxy = this.ns.proxy;
+
+    await this.run(
+      "ip",
+      ["netns", "add", worker],
+    );
+    this.createdNamespaces.push(worker);
+
+    await this.run(
+      "ip",
+      ["netns", "add", proxy],
+    );
+    this.createdNamespaces.push(proxy);
+
+    /*
+     * Worker <-> proxy segment.
+     * worker0 remains in the worker namespace.
+     * peer0 is created directly in the proxy namespace.
+     */
+    await this.ip(
+      worker,
+      "link",
+      "add",
+      "worker0",
+      "type",
+      "veth",
+      "peer",
+      "name",
+      "peer0",
+      "netns",
+      proxy,
+    );
+
+    await this.ip(
+      worker,
+      "addr",
+      "add",
+      this.topology.workerAddress,
+      "dev",
+      "worker0",
+    );
+
+    await this.ip(
+      proxy,
+      "addr",
+      "add",
+      this.topology.proxyWorkerAddress,
+      "dev",
+      "peer0",
+    );
+
+    /*
+     * Proxy <-> host boundary segment.
+     * Create the host endpoint first, then move its peer into
+     * the proxy namespace. The host endpoint is scanner-owned.
+     */
+    await this.run(
+      "ip",
+      [
+        "link",
+        "add",
+        this.hostInterface,
+        "type",
+        "veth",
+        "peer",
+        "name",
+        "upstream0",
+      ],
+    );
+    this.hostLinkCreated = true;
+
+    await this.run(
+      "ip",
+      [
+        "link",
+        "set",
+        "upstream0",
+        "netns",
+        proxy,
+      ],
+    );
+
+    await this.ip(
+      proxy,
+      "addr",
+      "add",
+      this.topology.proxyUpstreamAddress,
+      "dev",
+      "upstream0",
+    );
+
+    await this.run(
+      "ip",
+      [
+        "addr",
+        "add",
+        this.topology.hostBoundaryAddress,
+        "dev",
+        this.hostInterface,
+      ],
+    );
+
+    for (const [namespace, name] of [
+      [worker, "lo"],
+      [worker, "worker0"],
+      [proxy, "lo"],
+      [proxy, "peer0"],
+      [proxy, "upstream0"],
+    ]) {
+      await this.ip(
+        namespace,
+        "link",
+        "set",
+        name,
+        "up",
+      );
+    }
+
+    await this.run(
+      "ip",
+      [
+        "link",
+        "set",
+        this.hostInterface,
+        "up",
+      ],
+    );
+  }
+
   async start() {
     if (this.started || this.closing) {
       fail("Boundary already used");
@@ -161,15 +313,30 @@ export class ProductionLinuxBoundary {
 
     this.started = true;
 
-    await this.prerequisites();
+    try {
+      await this.prerequisites();
+      await this.createNetworkTopology();
 
-    /*
-     * Namespace, veth, nftables, cgroup and workload setup is
-     * added only after all production prerequisites succeed.
-     */
-    this.ready = true;
+      /*
+       * Routes, nftables, cgroups and workloads are installed
+       * in subsequent layers. Readiness remains false until the
+       * complete security boundary exists.
+       */
+      this.ready = false;
 
-    return this;
+      return this;
+    } catch (error) {
+      try {
+        await this.close();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Production boundary startup and cleanup failed",
+        );
+      }
+
+      throw error;
+    }
   }
 
   async scan(_request, { signal } = {}) {
@@ -194,11 +361,61 @@ export class ProductionLinuxBoundary {
     this.ready = false;
 
     this.closing = (async () => {
+      const errors = [];
+
+      const attempt = async operation => {
+        try {
+          await operation();
+        } catch (error) {
+          errors.push(error);
+        }
+      };
+
       /*
-       * Cleanup becomes resource-aware in the privileged
-       * implementation layer. close() is deliberately
-       * idempotent from the first version.
+       * Deleting the host endpoint deletes its veth peer too.
+       * If startup failed before the peer moved namespaces,
+       * this still removes the complete scanner-owned pair.
        */
+      if (this.hostLinkCreated) {
+        await attempt(
+          () => this.run(
+            "ip",
+            ["link", "delete", this.hostInterface],
+          ),
+        );
+        this.hostLinkCreated = false;
+      }
+
+      for (
+        const namespace of [...this.createdNamespaces].reverse()
+      ) {
+        await attempt(async () => {
+          const pids = (
+            await this.run(
+              "ip",
+              ["netns", "pids", namespace],
+            )
+          ).trim();
+
+          if (pids) {
+            fail("Production namespace retains processes");
+          }
+
+          await this.run(
+            "ip",
+            ["netns", "delete", namespace],
+          );
+        });
+      }
+
+      this.createdNamespaces = [];
+
+      if (errors.length) {
+        throw new AggregateError(
+          errors,
+          "Production boundary cleanup failed",
+        );
+      }
     })();
 
     return this.closing;
