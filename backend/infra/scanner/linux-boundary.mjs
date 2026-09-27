@@ -1482,7 +1482,7 @@ export class LinuxBoundary {
         resolverAddress: this.config.policy.resolverAddress,
         secret: this.secret
       },
-      45_000
+      120_000
     );
   }
   async topologySnapshot() {

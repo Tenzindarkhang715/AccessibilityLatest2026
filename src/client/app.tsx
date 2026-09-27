@@ -530,7 +530,7 @@ function ResultsPanel({
   const [results, setResults] = useState<TestResult[]>([]);
   const [resultsLoading, setResultsLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 5;
+  const maxRetries = 40;
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchResults = useCallback(async () => {

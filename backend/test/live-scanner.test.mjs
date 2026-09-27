@@ -75,7 +75,6 @@ test("unsupported scan options are rejected before browser launch", async () => 
   const { scanner, events } = setup();
 
   for (const input of [
-    { ...request, testType: "site" },
     { ...request, browsers: ["firefox"] },
     { ...request, browsers: ["chromium", "webkit"] },
     { ...request, browsers: [] },

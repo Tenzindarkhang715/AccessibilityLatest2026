@@ -18,8 +18,21 @@ const scanner = scannerSocketPath
   ? createScannerIpcClient({ socketPath: scannerSocketPath })
   : undefined;
 
+const frontendOrigins = (process.env.FRONTEND_ORIGINS ?? "")
+  .split(",").map(value => value.trim()).filter(Boolean);
+for (const origin of frontendOrigins) {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.origin !== origin || !["http:", "https:"].includes(parsed.protocol)) throw new Error();
+  } catch {
+    console.error("Invalid configuration: FRONTEND_ORIGINS must contain comma-separated HTTP(S) origins.");
+    process.exit(1);
+  }
+}
+
 const server = createApp(
   new TestService(new MemoryTestRepository(), scanner),
+  { allowedOrigins: frontendOrigins },
 );
 
 server.on("error", () => {

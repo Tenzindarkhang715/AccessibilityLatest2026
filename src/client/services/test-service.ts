@@ -1,7 +1,14 @@
 // Data access for the standalone API and GitHub Pages demo execution paths.
 // Keep platform details here; React owns presentation and request lifecycle state.
-const IS_GITHUB_PAGES =
-  window.location.hostname === "tenzindarkhang715.github.io";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim().replace(/\/$/, "");
+const IS_GITHUB_PAGES = window.location.hostname === "tenzindarkhang715.github.io";
+
+function apiUrl(path: string): string {
+  if (IS_GITHUB_PAGES && !API_BASE_URL) {
+    throw new Error("Real scanning is not configured for this deployment. Set VITE_API_BASE_URL to the HTTPS backend URL.");
+  }
+  return `${API_BASE_URL}${path}`;
+}
 
 export interface SubmitResult {
   type: "site" | "page";
@@ -32,18 +39,7 @@ export interface TestResult {
 }
 
 export async function getRecentTests(): Promise<HistoryRecord[] | undefined> {
-  if (IS_GITHUB_PAGES) {
-    try {
-      const history = JSON.parse(
-        localStorage.getItem("accessibilityTestHistory") || "[]"
-      );
-      return Array.isArray(history) ? history.slice(0, 10) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  const resp = await fetch("/api/tests?limit=10", {
+  const resp = await fetch(apiUrl("/api/tests?limit=10"), {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -78,36 +74,7 @@ export async function submitTest(
   { type, value, browsers, wcag }: SubmitResult,
   _standard: string,
 ): Promise<string> {
-  if (IS_GITHUB_PAGES) {
-    const runId = `demo-${Date.now()}`;
-    const demoTest: HistoryRecord = {
-      sys_id: runId,
-      url: value,
-      name: value,
-      browser: browsers.join(", "),
-      wcag_standard: wcag,
-      status: "completed",
-      notes: `Demo test. Browsers: ${browsers.join(", ")}.`,
-      sys_created_on: new Date().toISOString(),
-    };
-
-    try {
-      const existingHistory = JSON.parse(
-        localStorage.getItem("accessibilityTestHistory") || "[]"
-      );
-      const history = Array.isArray(existingHistory) ? existingHistory : [];
-      localStorage.setItem(
-        "accessibilityTestHistory",
-        JSON.stringify([demoTest, ...history].slice(0, 10))
-      );
-    } catch {
-      throw new Error("Failed to save demo test");
-    }
-
-    return runId;
-  }
-
-  const resp = await fetch("/api/tests", {
+  const resp = await fetch(apiUrl("/api/tests"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -149,115 +116,50 @@ export interface ResultsResponse {
 
 export async function getResults(
   runId: string | undefined,
-  submittedUrl: string,
+  _submittedUrl: string,
 ): Promise<ResultsResponse> {
-  if (IS_GITHUB_PAGES) {
-    return {
-      status: "completed",
-      results: [
-        {
-          sys_id: `demo-result-1-${submittedUrl}`,
-          test_url: submittedUrl,
-          test_type: "site",
-          issue: "Images should have alternative text",
-          issue_type: "error",
-          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/non-text-content.html",
-          severity: "high",
-          screenshot: "",
-        },
-        {
-          sys_id: `demo-result-2-${submittedUrl}`,
-          test_url: submittedUrl,
-          test_type: "site",
-          issue: "Form controls should have accessible labels",
-          issue_type: "warning",
-          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/labels-or-instructions.html",
-          severity: "medium",
-          screenshot: "",
-        },
-        {
-          sys_id: `demo-result-3-${submittedUrl}`,
-          test_url: submittedUrl,
-          test_type: "site",
-          issue: "Page should contain a descriptive title",
-          issue_type: "notice",
-          fix_reference: "https://www.w3.org/WAI/WCAG21/Understanding/page-titled.html",
-          severity: "low",
-          screenshot: "",
-        },
-      ],
-    };
-  }
-
   if (!runId) {
     throw new Error("Test identifier is missing.");
   }
 
-  const resp = await fetch(
-    `/api/tests/${encodeURIComponent(runId)}/results`,
-    {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    },
-  );
+  const results: TestResult[] = [];
+  let cursor: string | null = null;
+  let status = "failed";
 
-  if (!resp.ok) {
-    let message = `Failed to load results: ${resp.status}`;
-    try {
-      const data = await resp.json();
-      if (data?.error?.message) message = data.error.message;
-    } catch {
-      // Keep the safe generic message.
+  do {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor) query.set("cursor", cursor);
+    const resp = await fetch(
+      apiUrl(`/api/tests/${encodeURIComponent(runId)}/results?${query.toString()}`),
+      { method: "GET", headers: { Accept: "application/json" } },
+    );
+    if (!resp.ok) {
+      let message = `Failed to load results: ${resp.status}`;
+      try {
+        const data = await resp.json();
+        if (data?.error?.message) message = data.error.message;
+      } catch { /* Keep the safe generic message. */ }
+      throw new Error(message);
     }
-    throw new Error(message);
-  }
-
-  const data = await resp.json();
-
-  return {
-    status: typeof data.status === "string" ? data.status : "failed",
-    results: (data.findings || []).map((finding: {
-      id: string;
-      pageUrl: string;
-      testType: string;
-      issue: string;
-      issueType: string;
-      severity: string | null;
-      fixReference: string | null;
-      screenshotUrl: string | null;
+    const data = await resp.json();
+    status = typeof data.status === "string" ? data.status : "failed";
+    results.push(...(data.findings || []).map((finding: {
+      id: string; pageUrl: string; testType: string; issue: string; issueType: string;
+      severity: string | null; fixReference: string | null; screenshotUrl: string | null;
     }) => ({
-      sys_id: finding.id,
-      test_url: finding.pageUrl,
-      test_type: finding.testType,
-      issue: finding.issue,
-      issue_type: finding.issueType,
-      fix_reference: finding.fixReference ?? "",
-      severity: finding.severity ?? "",
+      sys_id: finding.id, test_url: finding.pageUrl, test_type: finding.testType,
+      issue: finding.issue, issue_type: finding.issueType,
+      fix_reference: finding.fixReference ?? "", severity: finding.severity ?? "",
       screenshot: finding.screenshotUrl ?? "",
-    })),
-  };
+    })));
+    cursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
+  } while (status === "completed" && cursor);
+
+  return { status, results };
 }
 
 export async function deleteTest(id: string): Promise<void> {
-  if (IS_GITHUB_PAGES) {
-    try {
-      const existingHistory = JSON.parse(
-        localStorage.getItem("accessibilityTestHistory") || "[]"
-      );
-      const updatedHistory = existingHistory.filter(
-        (item: HistoryRecord) => item.sys_id !== id
-      );
-      localStorage.setItem(
-        "accessibilityTestHistory",
-        JSON.stringify(updatedHistory)
-      );
-    } catch {
-      throw new Error("Failed to delete test");
-    }
-    return;
-  }
-
-  const resp = await fetch(`/api/tests/${encodeURIComponent(id)}`, {
+  const resp = await fetch(apiUrl(`/api/tests/${encodeURIComponent(id)}`), {
     method: "DELETE",
     headers: { Accept: "application/json" },
   });
@@ -275,33 +177,8 @@ export async function deleteTest(id: string): Promise<void> {
 }
 
 export async function retestTest(record: HistoryRecord): Promise<void> {
-  if (IS_GITHUB_PAGES) {
-    try {
-      const demoTest = {
-        sys_id: Date.now().toString(),
-        url: record.url,
-        name: "Re-Test - " + record.url,
-        browser: record.browser,
-        wcag_standard: record.wcag_standard,
-        status: "completed",
-        notes: `Re-test of ${record.url}. Browsers: ${record.browser}.`,
-        sys_created_on: new Date().toISOString(),
-      };
-      const existingHistory = JSON.parse(
-        localStorage.getItem("accessibilityTestHistory") || "[]"
-      );
-      localStorage.setItem(
-        "accessibilityTestHistory",
-        JSON.stringify([demoTest, ...existingHistory])
-      );
-    } catch {
-      throw new Error("Failed to re-test");
-    }
-    return;
-  }
-
   const resp = await fetch(
-    `/api/tests/${encodeURIComponent(record.sys_id)}/retests`,
+    apiUrl(`/api/tests/${encodeURIComponent(record.sys_id)}/retests`),
     {
       method: "POST",
       headers: { Accept: "application/json" },

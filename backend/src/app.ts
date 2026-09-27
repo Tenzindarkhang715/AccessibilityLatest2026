@@ -32,7 +32,8 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   catch { return invalid("Malformed JSON body."); }
 }
 
-export function createApp(service: TestService) {
+export function createApp(service: TestService, options: { allowedOrigins?: readonly string[] } = {}) {
+  const allowedOrigins = new Set(options.allowedOrigins ?? []);
   const server = createServer((request, response) => {
     request.on("error", () => { /* A disconnected request must not crash the server. */ });
     void route(request, response).catch(error => {
@@ -45,6 +46,21 @@ export function createApp(service: TestService) {
   });
 
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const origin = request.headers.origin;
+    if (origin && allowedOrigins.has(origin)) {
+      response.setHeader("Access-Control-Allow-Origin", origin);
+      response.setHeader("Vary", "Origin");
+    }
+    if (request.method === "OPTIONS") {
+      if (!origin || !allowedOrigins.has(origin)) {
+        throw new ApiError(403, "INVALID_REQUEST", "Origin is not allowed.");
+      }
+      response.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+      response.writeHead(204);
+      response.end();
+      return;
+    }
     let url: URL;
     try { url = new URL(request.url ?? "/", "http://localhost"); }
     catch { return invalid("Invalid request target."); }

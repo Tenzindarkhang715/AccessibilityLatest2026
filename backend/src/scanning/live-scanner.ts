@@ -7,6 +7,7 @@ import {
   ScannerError,
   type AccessibilityScanner,
   type ScanOutcome,
+  type FindingDraft,
 } from "../scanner.js";
 import {
   createTargetPolicy,
@@ -38,7 +39,7 @@ export function createLiveScanner(options: {
 }): AccessibilityScanner {
   const policy = createTargetPolicy(options.targetPolicy);
 
-  const scanTimeoutMs = options.scanTimeoutMs ?? 30_000;
+  const scanTimeoutMs = options.scanTimeoutMs ?? 90_000;
   const documentTimeoutMs = options.documentTimeoutMs ?? 10_000;
 
   for (const value of [scanTimeoutMs, documentTimeoutMs]) {
@@ -84,7 +85,7 @@ export function createLiveScanner(options: {
   return {
     async scan(request, control): Promise<ScanOutcome> {
       if (
-        request.testType !== "page" ||
+        (request.testType !== "page" && request.testType !== "site") ||
         request.wcagStandard !== "wcag_2_1_aa" ||
         request.browsers.length !== 1 ||
         request.browsers[0] !== "chromium"
@@ -203,40 +204,79 @@ export function createLiveScanner(options: {
 
         check();
 
-        await bounded(
-          page.goto(target.url, {
+        const root = new URL(target.url);
+        root.hash = "";
+        const rootHostname = root.hostname.toLowerCase();
+        const maxSitePages = 25;
+        const maxSiteDepth = 3;
+        const queue: Array<{ url: string; depth: number }> = [{ url: root.href, depth: 0 }];
+        const queued = new Set<string>([root.href]);
+        const findings: FindingDraft[] = [];
+        const evaluatedRuleIds = new Set<string>();
+        const incompleteRuleIds = new Set<string>();
+        let engine = "axe-core";
+        let engineVersion = "";
+        let scannedPages = 0;
+
+        while (queue.length && scannedPages < (request.testType === "site" ? maxSitePages : 1)) {
+          check();
+          const current = queue.shift()!;
+          const assessed = await bounded(policy.assess(current.url, signal));
+          check();
+          await bounded(page.goto(assessed.url, {
             waitUntil: "domcontentloaded",
-            timeout: documentTimeoutMs,
-          }),
-        );
+            timeout: Math.min(documentTimeoutMs, Math.max(1, deadline - Date.now())),
+          }));
+          check();
 
-        check();
+          const finalUrl = new URL(page.url());
+          finalUrl.hash = "";
+          await bounded(policy.assess(finalUrl.href, signal));
+          if (request.testType === "site" && finalUrl.hostname.toLowerCase() !== rootHostname) continue;
 
-        const results = await bounded(
-          new AxeBuilder({ page }).withTags([...WCAG_TAGS]).analyze(),
-        );
+          const results = await bounded(
+            new AxeBuilder({ page }).withTags([...WCAG_TAGS]).analyze(),
+          );
+          check();
+          scannedPages += 1;
+          findings.push(...mapAxeFindings(results, finalUrl.href));
+          engine = results.testEngine.name;
+          engineVersion = results.testEngine.version;
+          for (const rule of [...results.violations, ...results.passes, ...results.incomplete, ...results.inapplicable]) {
+            evaluatedRuleIds.add(rule.id);
+          }
+          for (const rule of results.incomplete) incompleteRuleIds.add(rule.id);
 
-        check();
-
-        const allResults = [
-          ...results.violations,
-          ...results.passes,
-          ...results.incomplete,
-          ...results.inapplicable,
-        ];
+          if (request.testType !== "site" || current.depth >= maxSiteDepth) continue;
+          const hrefs = await bounded(page.locator("a[href]").evaluateAll(elements =>
+            elements.map(element => (element as HTMLAnchorElement).href),
+          ));
+          for (const href of hrefs) {
+            if (queue.length + scannedPages >= maxSitePages) break;
+            let candidate: URL;
+            try { candidate = new URL(href); } catch { continue; }
+            candidate.hash = "";
+            if (!["http:", "https:"].includes(candidate.protocol)
+                || candidate.hostname.toLowerCase() !== rootHostname) continue;
+            const canonical = candidate.href;
+            if (queued.has(canonical)) continue;
+            // Crawl scope is separate from target authorization. Each URL is
+            // assessed again immediately before browser navigation.
+            queued.add(canonical);
+            queue.push({ url: canonical, depth: current.depth + 1 });
+          }
+        }
 
         return {
-          findings: mapAxeFindings(results, page.url()),
+          findings,
           execution: {
             browser: "chromium",
             browserVersion: browser.version(),
-            engine: results.testEngine.name,
-            engineVersion: results.testEngine.version,
+            engine,
+            engineVersion,
             tags: [...WCAG_TAGS],
-            evaluatedRuleIds: [
-              ...new Set(allResults.map(rule => rule.id)),
-            ].sort(),
-            incompleteRuleIds: results.incomplete.map(rule => rule.id),
+            evaluatedRuleIds: [...evaluatedRuleIds].sort(),
+            incompleteRuleIds: [...incompleteRuleIds].sort(),
             mode: "live",
           },
         };
