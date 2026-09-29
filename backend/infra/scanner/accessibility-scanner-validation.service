@@ -1,0 +1,27 @@
+[Unit]
+Description=Accessibility Scanner Production Boundary Validation
+After=local-fs.target
+ConditionPathExists=/opt/accessibility-scanner-validation/backend/infra/scanner/supervisor-entry.mjs
+ConditionPathExists=/opt/accessibility-scanner-validation/backend/infra/scanner/supervisor-launcher.sh
+
+[Service]
+Type=simple
+User=root
+Group=accessibility-scanner
+Environment=SCANNER_LINUX_INTEGRATION=1
+Environment=SCANNER_DISPOSABLE_LINUX=1
+Environment=SCANNER_SOCKET_PATH=/run/accessibility-scanner/validation-supervisor.sock
+Environment=SCANNER_UPLINK_INTERFACE=enp0s1
+Environment=SCANNER_UPLINK_GATEWAY=192.168.64.1
+Environment=SCANNER_UPSTREAM_DNS=192.168.64.1
+Environment=SCANNER_DEPLOYMENT_EXCLUSIONS=192.168.64.0/24
+RuntimeDirectory=accessibility-scanner
+RuntimeDirectoryMode=0750
+ExecStart=/opt/accessibility-scanner-validation/backend/infra/scanner/supervisor-launcher.sh
+Restart=no
+KillSignal=SIGTERM
+TimeoutStopSec=15s
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

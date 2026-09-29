@@ -225,3 +225,40 @@ unverified until then. This is not hostile-browser containment, production-host
 isolation, a Chromium seccomp profile, or production-ready browser-wide SSRF protection.
 CONNECT remains opaque; permitted public endpoints could themselves relay traffic.
 API submission and Re-Test guards and the fixture-only scanner remain unchanged.
+
+## Production Chromium sandbox on Ubuntu 23.10+
+
+The production browser workload keeps Chromium's sandbox enabled. It must not use
+`--no-sandbox`, a setuid `chrome_sandbox`, or a global relaxation of Ubuntu's
+unprivileged-user-namespace policy.
+
+Ubuntu's AppArmor user-namespace restriction requires the dedicated profile in
+`accessibility-scanner-chrome.apparmor`. Install that file as
+`/etc/apparmor.d/accessibility-scanner-chrome`, validate it with
+`apparmor_parser -Q`, then load it with `apparmor_parser -r` before starting the
+scanner service.
+
+The production launcher enters `accessibility-scanner-chrome` with `aa-exec`
+*before* `setpriv --no-new-privs`. It then drops to UID/GID 61001, clears all
+capability sets and sets `NoNewPrivs=1` exactly as before. This ordering is
+intentional: AppArmor profile transitions that enable Chromium's narrowly scoped
+`userns` permission must occur before `no_new_privs` is set. The proxy workload
+does not enter this profile and receives no user-namespace permission.
+
+The profile is pinned to the immutable Chromium runtime path
+`/opt/scanner-runtime/chromium-1243/chrome-linux-arm64/chrome`. A Chromium runtime
+upgrade must update and reload this profile deliberately; do not broaden the path
+with wildcards.
+
+## Validation deployment package
+
+The repository now includes `supervisor-launcher.sh` and
+`accessibility-scanner-validation.service`; deployment must use the canonical
+`backend/infra/scanner` paths. The launcher resolves `supervisor-entry.mjs` relative
+to itself instead of hard-coding a second repository layout. It fails closed if
+`aa-exec` is unavailable or AppArmor is disabled, creates the owned cgroup parent,
+and preserves the reviewed supervisor capability boundary.
+
+Before starting the validation service, install and reload
+`accessibility-scanner-chrome.apparmor`. Do not use `--no-sandbox`, do not make
+`chrome_sandbox` setuid, and do not relax Ubuntu's global user-namespace policy.

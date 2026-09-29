@@ -81,9 +81,25 @@ export function createTargetPolicy(options: TargetPolicyOptions) {
   });
   const resolve = options.resolve;
 
-  async function assess(raw: string, signal: AbortSignal): Promise<TargetAssessment> {
+  function admit(raw: string, signal: AbortSignal): URL {
     checkCancellation(signal);
     const url = parseTarget(raw, ports, extraNames);
+    const hostname = url.hostname.replace(/^\[|\]$/g, "");
+
+    // Hostnames are resolved and address-checked by assess(). Browser workers
+    // use this URL-only admission path because the enforcing egress proxy owns
+    // DNS and connection pinning. IP literals still receive address-policy
+    // enforcement here because no DNS is required for them.
+    if (isIP(hostname)) {
+      const result = assessAddress(hostname);
+      if (!result.allowed) denied();
+    }
+
+    return url;
+  }
+
+  async function assess(raw: string, signal: AbortSignal): Promise<TargetAssessment> {
+    const url = admit(raw, signal);
     const hostname = url.hostname.replace(/^\[|\]$/g, "");
     let answers: readonly string[];
     if (isIP(hostname)) answers = [hostname];
@@ -129,5 +145,5 @@ export function createTargetPolicy(options: TargetPolicyOptions) {
     if (/^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*@/i.test(location)) denied();
     return assess(next.href, signal);
   }
-  return Object.freeze({ assess, assessRedirect });
+  return Object.freeze({ admit, assess, assessRedirect });
 }

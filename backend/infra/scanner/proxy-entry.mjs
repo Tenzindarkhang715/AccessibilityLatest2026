@@ -61,6 +61,16 @@ export async function serve(handler, dispose = async () => {}) {
         process.stdout.write(JSON.stringify({ id: message.id, value }) + "\n");
       } catch (error) {
         const code = workloadErrorCode(error);
+        const diagnostic = typeof error?.diagnostic === "string"
+          ? error.diagnostic
+          : typeof error?.message === "string"
+            ? error.message
+            : "Unknown workload failure";
+        console.error(
+          `[scanner-workload-error] code=${code ?? "ENGINE_FAILURE"} ${diagnostic}`
+            .replace(/[\u0000-\u001f\u007f]+/g, " ")
+            .slice(0, 2048),
+        );
 
         process.stdout.write(
           JSON.stringify({

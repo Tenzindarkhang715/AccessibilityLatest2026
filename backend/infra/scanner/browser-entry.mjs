@@ -1,9 +1,7 @@
 import { mkdir } from "node:fs/promises";
-import { Resolver } from "node:dns/promises";
 import { pathToFileURL } from "node:url";
 
 import { serve } from "./proxy-entry.mjs";
-import { createTargetResolver } from "../../dist/security/target-resolver.js";
 
 const BROWSER_EXECUTABLE =
   "/opt/scanner-runtime/chromium-1243/chrome-linux-arm64/chrome";
@@ -30,17 +28,11 @@ async function main() {
       scanner = createLiveScanner({
         targetPolicy: {
           allowedPorts: [80, 443],
-          resolve: createTargetResolver({
-            createResolver: () => {
-              const resolver = new Resolver({
-                timeout: 1000,
-                tries: 1,
-              });
-
-              resolver.setServers([message.resolverAddress]);
-              return resolver;
-            },
-          }),
+          // Browser admission must never perform DNS. The isolated egress
+          // proxy independently resolves, validates and pins every connection.
+          resolve: async () => {
+            throw new Error("Browser target policy must not resolve DNS");
+          },
         },
         proxy: {
           server: message.proxyServer,
@@ -48,6 +40,9 @@ async function main() {
           password: message.secret,
         },
         browserExecutablePath: BROWSER_EXECUTABLE,
+        observe: event => {
+          console.error(`[scanner-browser-stage] ${event}`);
+        },
       });
 
       return scanner.scan(

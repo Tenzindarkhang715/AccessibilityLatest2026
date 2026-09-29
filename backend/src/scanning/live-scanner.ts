@@ -145,7 +145,7 @@ export function createLiveScanner(options: {
          * through the validating proxy by the surrounding Linux worker
          * network boundary.
          */
-        const target = await bounded(policy.assess(request.url, signal));
+        const target = policy.admit(request.url, signal);
 
         check();
 
@@ -204,7 +204,7 @@ export function createLiveScanner(options: {
 
         check();
 
-        const root = new URL(target.url);
+        const root = new URL(target.href);
         root.hash = "";
         const rootHostname = root.hostname.toLowerCase();
         const maxSitePages = 25;
@@ -221,9 +221,9 @@ export function createLiveScanner(options: {
         while (queue.length && scannedPages < (request.testType === "site" ? maxSitePages : 1)) {
           check();
           const current = queue.shift()!;
-          const assessed = await bounded(policy.assess(current.url, signal));
+          const admitted = policy.admit(current.url, signal);
           check();
-          await bounded(page.goto(assessed.url, {
+          await bounded(page.goto(admitted.href, {
             waitUntil: "domcontentloaded",
             timeout: Math.min(documentTimeoutMs, Math.max(1, deadline - Date.now())),
           }));
@@ -231,7 +231,7 @@ export function createLiveScanner(options: {
 
           const finalUrl = new URL(page.url());
           finalUrl.hash = "";
-          await bounded(policy.assess(finalUrl.href, signal));
+          policy.admit(finalUrl.href, signal);
           if (request.testType === "site" && finalUrl.hostname.toLowerCase() !== rootHostname) continue;
 
           const results = await bounded(
@@ -293,6 +293,13 @@ export function createLiveScanner(options: {
           throw new ScannerError("TARGET_NOT_ALLOWED");
         }
 
+        const diagnostic =
+          error instanceof Error
+            ? `${error.name}: ${error.message}`
+            : String(error);
+        console.error(
+          `[scanner-engine-error] ${diagnostic.replace(/[\\r\\n\\t]+/g, " ").slice(0, 2000)}`,
+        );
         throw new ScannerError("ENGINE_FAILURE");
       } finally {
         clearTimeout(timer);
