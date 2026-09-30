@@ -146,6 +146,14 @@ export class ProductionLinuxBoundary {
 
     await this.run("ip", ["netns", "add", worker]);
     this.createdNamespaces.push(worker);
+    await this.run("ip", [
+      "netns", "exec", worker, "sysctl", "-q", "-w",
+      "net.ipv6.conf.all.disable_ipv6=1",
+    ]);
+    await this.run("ip", [
+      "netns", "exec", worker, "sysctl", "-q", "-w",
+      "net.ipv6.conf.default.disable_ipv6=1",
+    ]);
     await this.run("ip", ["netns", "add", proxy]);
     this.createdNamespaces.push(proxy);
 

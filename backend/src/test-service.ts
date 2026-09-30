@@ -8,7 +8,12 @@ import { scanRequest } from "./validation.js";
 function executionRequest(request: ScanRequest): ScanRequest {
   const browsers = request.browsers.length === 1 && /^Chrome(?:\s|$)/i.test(request.browsers[0])
     ? ["chromium"] : [...request.browsers];
-  return { ...request, browsers };
+  return {
+    url: request.url,
+    testType: request.testType,
+    browsers,
+    wcagStandard: request.wcagStandard,
+  };
 }
 
 function publishedFinding(testId: string, draft: FindingDraft): Finding {

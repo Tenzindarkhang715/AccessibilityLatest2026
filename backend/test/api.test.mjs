@@ -146,3 +146,45 @@ test("history limits above 100 return all requested stored records", async () =>
     }
   });
 });
+
+test("scanner execution receives only the strict scan request fields", async () => {
+  const repository = new MemoryTestRepository();
+  let receivedRequest = null;
+  const scanner = {
+    async scan(request) {
+      receivedRequest = request;
+      return {
+        findings: [],
+        execution: {
+          browser: "chromium",
+          browserVersion: "test",
+          engine: "axe-core",
+          engineVersion: "test",
+          tags: [],
+          evaluatedRuleIds: [],
+          incompleteRuleIds: [],
+          mode: "live",
+        },
+      };
+    },
+  };
+
+  const service = new TestService(repository, scanner);
+  const submitted = await service.submit(specification);
+
+  for (let attempt = 0; attempt < 50 && receivedRequest === null; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+
+  assert.deepEqual(receivedRequest, {
+    url: specification.url,
+    testType: specification.testType,
+    browsers: ["chromium"],
+    wcagStandard: specification.wcagStandard,
+  });
+  assert.deepEqual(Object.keys(receivedRequest).sort(),
+    ["browsers", "testType", "url", "wcagStandard"]);
+
+  const stored = await repository.get(submitted.test.id);
+  assert.equal(stored.test.status, "completed");
+});
