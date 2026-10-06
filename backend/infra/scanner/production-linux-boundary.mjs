@@ -296,6 +296,7 @@ export class ProductionLinuxBoundary {
       61001,
       browserEntry,
       "production-browser",
+      request.browsers[0],
     );
 
     const abort = () => {

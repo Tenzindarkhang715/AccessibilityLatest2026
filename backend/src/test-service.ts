@@ -6,8 +6,9 @@ import type { TestRepository } from "./test-repository.js";
 import { scanRequest } from "./validation.js";
 
 function executionRequest(request: ScanRequest): ScanRequest {
-  const browsers = request.browsers.length === 1 && /^Chrome(?:\s|$)/i.test(request.browsers[0])
-    ? ["chromium"] : [...request.browsers];
+  const browsers = request.browsers.map(browser =>
+    /^Chrome(?:\s|$)/i.test(browser) ? "chromium"
+      : /^Firefox(?:\s|$)/i.test(browser) ? "firefox" : browser);
   return {
     url: request.url,
     testType: request.testType,
@@ -16,8 +17,9 @@ function executionRequest(request: ScanRequest): ScanRequest {
   };
 }
 
-function publishedFinding(testId: string, draft: FindingDraft): Finding {
+function publishedFinding(testId: string, draft: FindingDraft, browser?: string): Finding {
   return {
+    ...(browser ? { browser } : {}),
     id: randomUUID(), testId, pageUrl: draft.pageUrl, issue: draft.issue,
     issueType: draft.issueType, severity: draft.severity,
     fixReference: draft.fixReference, screenshotId: draft.screenshotId,
@@ -67,15 +69,32 @@ export class TestService {
     if (!await this.repository.replace({ test: running, findings: [] })) return;
 
     try {
-      const outcome = await this.scanner.scan(executionRequest(accepted), {
-        signal: new AbortController().signal,
-      });
+      const request = executionRequest(accepted);
+      const combined = request.browsers.length > 1;
+      if (combined && (request.browsers.length !== 2 ||
+          new Set(request.browsers).size !== 2 ||
+          !request.browsers.every(browser => ["chromium", "firefox"].includes(browser)))) {
+        throw new ScannerError("UNSUPPORTED_SCAN_OPTIONS");
+      }
+      const findings: Finding[] = [];
+      for (const browser of request.browsers) {
+        // Each call retains the existing isolated, single-browser IPC contract.
+        const outcome = await this.scanner.scan({ ...request, browsers: [browser] }, {
+          signal: new AbortController().signal,
+        });
+        if (combined && outcome.execution.browser !== browser) {
+          throw new ScannerError("ENGINE_FAILURE");
+        }
+        const label = `${outcome.execution.browser === "chromium" ? "Chromium" : "Firefox"} ${outcome.execution.browserVersion}`;
+        findings.push(...outcome.findings.map(draft =>
+          publishedFinding(accepted.id, draft, label)));
+      }
       const completed: TestRun = {
         ...running, status: "completed", completedAt: new Date().toISOString(), failure: null,
       };
       await this.repository.replace({
         test: completed,
-        findings: outcome.findings.map(draft => publishedFinding(accepted.id, draft)),
+        findings,
       });
     } catch (error) {
       const failed: TestRun = {
@@ -119,6 +138,7 @@ export class TestService {
     const page = published.slice(offset, offset + limit);
     return {
       testId: id, status: test.status,
+      failure: test.status === "failed" ? test.failure : null,
       findings: page.map(finding => ({ ...finding, testType: test.testType, screenshotUrl: null })),
       nextCursor: offset + limit < published.length
         ? Buffer.from(JSON.stringify({ testId: id, offset: offset + limit })).toString("base64url") : null,

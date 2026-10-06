@@ -26,7 +26,7 @@ Documents the current standalone architecture, including:
 - Scanner IPC
 - Scanner Supervisor
 - Production Linux security boundary
-- Chromium / Playwright / axe scanner
+- Chromium and Firefox / Playwright / axe scanner
 - Network and workload isolation
 - GitHub and hosting architecture
 
@@ -71,3 +71,7 @@ documentation.
 The goal is to keep these documents synchronized with the actual
 application rather than reconstructing the architecture later from Git
 history.
+
+## Scan Lifecycle and Results
+
+See [Scan Lifecycle and Results](05-scan-lifecycle-and-results.md) for scan execution, browser tables, exports, pagination, and history actions.

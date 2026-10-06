@@ -28,6 +28,7 @@ export interface HistoryRecord {
 }
 
 export interface TestResult {
+  browser?: string;
   sys_id: string;
   test_url: string;
   test_type: string;
@@ -112,6 +113,7 @@ export async function submitTest(
 export interface ResultsResponse {
   status: string;
   results: TestResult[];
+  failure: { code: string; message: string } | null;
 }
 
 export async function getResults(
@@ -125,6 +127,7 @@ export async function getResults(
   const results: TestResult[] = [];
   let cursor: string | null = null;
   let status = "failed";
+  let failure: ResultsResponse["failure"] = null;
 
   do {
     const query = new URLSearchParams({ limit: "100" });
@@ -143,10 +146,16 @@ export async function getResults(
     }
     const data = await resp.json();
     status = typeof data.status === "string" ? data.status : "failed";
+    failure = status === "failed" &&
+      typeof data.failure?.code === "string" &&
+      typeof data.failure?.message === "string"
+      ? { code: data.failure.code, message: data.failure.message } : null;
     results.push(...(data.findings || []).map((finding: {
+      browser?: string;
       id: string; pageUrl: string; testType: string; issue: string; issueType: string;
       severity: string | null; fixReference: string | null; screenshotUrl: string | null;
     }) => ({
+      browser: typeof finding.browser === "string" ? finding.browser : "",
       sys_id: finding.id, test_url: finding.pageUrl, test_type: finding.testType,
       issue: finding.issue, issue_type: finding.issueType,
       fix_reference: finding.fixReference ?? "", severity: finding.severity ?? "",
@@ -155,7 +164,7 @@ export async function getResults(
     cursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
   } while (status === "completed" && cursor);
 
-  return { status, results };
+  return { status, results, failure };
 }
 
 export async function deleteTest(id: string): Promise<void> {
@@ -176,7 +185,7 @@ export async function deleteTest(id: string): Promise<void> {
   }
 }
 
-export async function retestTest(record: HistoryRecord): Promise<void> {
+export async function retestTest(record: HistoryRecord): Promise<SubmitResult> {
   const resp = await fetch(
     apiUrl(`/api/tests/${encodeURIComponent(record.sys_id)}/retests`),
     {
@@ -195,4 +204,42 @@ export async function retestTest(record: HistoryRecord): Promise<void> {
     }
     throw new Error(message);
   }
+
+  return submittedTestFromResponse(await resp.json());
+}
+
+function submittedTestFromResponse(data: {
+  test?: {
+    id: string; url: string; testType: "site" | "page";
+    browsers: string[]; wcagStandard: string;
+  };
+}): SubmitResult {
+  const test = data?.test;
+  if (!test || typeof test.id !== "string" || !test.id ||
+      typeof test.url !== "string" ||
+      !["site", "page"].includes(test.testType) ||
+      !Array.isArray(test.browsers) ||
+      !test.browsers.every(browser => typeof browser === "string") ||
+      typeof test.wcagStandard !== "string") {
+    throw new Error("The server returned invalid test details.");
+  }
+  return {
+    runId: test.id, value: test.url, type: test.testType,
+    browsers: test.browsers, wcag: test.wcagStandard,
+  };
+}
+
+export async function getTestDetails(id: string): Promise<SubmitResult> {
+  const resp = await fetch(apiUrl(`/api/tests/${encodeURIComponent(id)}`), {
+    headers: { Accept: "application/json" },
+  });
+  if (!resp.ok) {
+    let message = `Unable to open test: ${resp.status}`;
+    try {
+      const data = await resp.json();
+      if (typeof data?.error?.message === "string") message = data.error.message;
+    } catch { /* Keep the generic message. */ }
+    throw new Error(message);
+  }
+  return submittedTestFromResponse(await resp.json());
 }

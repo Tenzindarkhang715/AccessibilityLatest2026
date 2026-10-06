@@ -69,7 +69,7 @@ Production Linux Boundary
  └── Controlled Network Egress
  │
  ▼
-Chromium + Playwright + axe
+Chromium or Firefox + Playwright + axe
  │
  ▼
 Target Website
@@ -93,7 +93,7 @@ ServiceNow is no longer part of the active runtime.
 | Test lifecycle | ServiceNow records/status | TestService |
 | Scanner communication | ServiceNow-dependent workflow | Unix socket IPC |
 | Scanner control | Platform-dependent | Scanner Supervisor |
-| Browser execution | External/platform workflow | Chromium + Playwright |
+| Browser execution | External/platform workflow | Chromium or Firefox + Playwright; sequential combined scans |
 | Accessibility engine | Platform workflow | axe |
 | Network security | Platform-dependent | Explicit Linux boundary |
 | Isolation | ServiceNow/platform | namespaces + cgroups |

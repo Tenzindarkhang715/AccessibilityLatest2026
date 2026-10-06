@@ -3,8 +3,11 @@ import { pathToFileURL } from "node:url";
 
 import { serve } from "./proxy-entry.mjs";
 
-const BROWSER_EXECUTABLE =
+const CHROMIUM_EXECUTABLE =
   "/opt/scanner-runtime/chromium-1243/chrome-linux-arm64/chrome";
+
+const FIREFOX_EXECUTABLE =
+  "/opt/scanner-runtime/firefox-1543/firefox/firefox";
 
 async function main() {
   let scanner;
@@ -39,7 +42,10 @@ async function main() {
           username: "proxy",
           password: message.secret,
         },
-        browserExecutablePath: BROWSER_EXECUTABLE,
+        browserExecutablePath:
+          message.request.browsers[0] === "firefox"
+            ? FIREFOX_EXECUTABLE
+            : CHROMIUM_EXECUTABLE,
         observe: event => {
           console.error(`[scanner-browser-stage] ${event}`);
         },

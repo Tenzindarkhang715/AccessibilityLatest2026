@@ -171,7 +171,7 @@ function validateExecution(
   }
 
   if (
-    value.browser !== "chromium" ||
+    (value.browser !== "chromium" && value.browser !== "firefox") ||
     typeof value.browserVersion !== "string" ||
     typeof value.engine !== "string" ||
     typeof value.engineVersion !== "string" ||
@@ -315,6 +315,7 @@ function validateScanOutcome(value: unknown): ScanOutcome | null {
 function decodeResponse(
   value: unknown,
   expectedId: string,
+  expectedBrowser: "chromium" | "firefox",
 ): ScanIpcResponse | null {
   if (!isPlainObject(value)) {
     return null;
@@ -330,7 +331,7 @@ function decodeResponse(
 
     const outcome = validateScanOutcome(value.outcome);
 
-    if (!outcome) {
+    if (!outcome || outcome.execution.browser !== expectedBrowser) {
       return null;
     }
 
@@ -550,7 +551,13 @@ export function createScannerIpcClient(
             return;
           }
 
-          const response = decodeResponse(parsed, id);
+          const response = decodeResponse(
+            parsed,
+            id,
+            validatedRequest.browsers[0] === "firefox"
+              ? "firefox"
+              : "chromium",
+          );
 
           if (!response) {
             finish(scannerFailure("ENGINE_FAILURE"));

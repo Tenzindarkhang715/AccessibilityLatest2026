@@ -1,0 +1,12 @@
+abi <abi/5.0>,
+include <tunables/global>
+
+# Firefox is already isolated by the scanner network, mount/PID namespaces,
+# cgroup limits, UID 61001, empty capabilities and NoNewPrivs=1.
+# Ubuntu 23.10+ additionally requires an AppArmor userns grant for Firefox's
+# own sandbox. The production launcher enters this profile before enabling
+# no_new_privs.
+profile accessibility-scanner-firefox /opt/scanner-runtime/firefox-1543/firefox/firefox flags=(unconfined) {
+  userns,
+  @{exec_path} mr,
+}

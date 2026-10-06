@@ -12,7 +12,7 @@ export interface FindingDraft extends Omit<Finding, "id" | "testId"> {
 export interface ScanOutcome {
   findings: FindingDraft[];
   execution: {
-    browser: "chromium";
+    browser: "chromium" | "firefox";
     browserVersion: string;
     engine: string;
     engineVersion: string;

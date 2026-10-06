@@ -32,7 +32,12 @@ if [ "$4" = "browser" ]; then
   # Chromium needs userns for its sandbox.  Entering the narrow profile first
   # lets Chromium keep its sandbox while the workload still runs as UID 61001,
   # with no capabilities and NoNewPrivs=1.
-  exec aa-exec -p accessibility-scanner-chrome -- \
+  case "$6" in
+    chromium) profile=accessibility-scanner-chrome ;;
+    firefox) profile=accessibility-scanner-firefox ;;
+    *) exit 33 ;;
+  esac
+  exec aa-exec -p "$profile" -- \
     setpriv --reuid="$1" --regid="$1" --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- "$2" "$3"
 fi
 exec setpriv --reuid="$1" --regid="$1" --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- "$2" "$3"
@@ -224,7 +229,7 @@ export class ProductionWorkloads {
     if (!this.failure) this.failure = error;
   }
 
-  async spawnPeer(namespace, uid, script, label) {
+  async spawnPeer(namespace, uid, script, label, browser = null) {
     const deploymentRoot = resolve(dirname(script), "../../..");
     const group = productionGroupPath(
       this.cgroupParent,
@@ -269,6 +274,7 @@ export class ProductionWorkloads {
         script,
         browserWorkload ? "browser" : "proxy",
         deploymentRoot,
+        browserWorkload ? browser : "",
       ],
       {
         stdio: ["pipe", "pipe", "pipe"],

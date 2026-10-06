@@ -43,16 +43,25 @@ test("production browser has bounded Chromium-sized cgroup limits while proxy st
 });
 
 
-test("production browser enters the scanner AppArmor profile before no-new-privs", async () => {
+test("production browser selects the browser-specific AppArmor profile before no-new-privs", async () => {
   const text = await source();
   assert.match(text, /if \[ "\$4" = "browser" \]; then/);
+  assert.match(text, /case "\$6" in/);
+  assert.match(text, /chromium\) profile=accessibility-scanner-chrome/);
+  assert.match(text, /firefox\) profile=accessibility-scanner-firefox/);
   assert.match(
     text,
-    /exec aa-exec -p accessibility-scanner-chrome --[\s\S]{0,240}setpriv[\s\S]{0,240}--no-new-privs/,
+    /exec aa-exec -p "\$profile" --[\s\S]{0,240}setpriv[\s\S]{0,240}--no-new-privs/,
   );
   assert.match(text, /browserWorkload \? "browser" : "proxy"/);
+  assert.match(text, /browserWorkload \? browser : ""/);
   assert.doesNotMatch(text, /--no-sandbox/);
   assert.doesNotMatch(text, /--disable-setuid-sandbox/);
+});
+
+test("production workload rejects unknown browser AppArmor selections", async () => {
+  const text = await source();
+  assert.match(text, /\*\) exit 33/);
 });
 
 test("scanner AppArmor policy grants userns only through the dedicated Chrome profile", async () => {
@@ -77,7 +86,7 @@ test("production workload protects the deployment tree without self-binding the 
   assert.match(text, /mount -o remount,bind,ro "\$5" \|\| exit 24/);
   assert.match(
     text,
-    /browserWorkload \? "browser" : "proxy",\s*deploymentRoot,/,
+    /browserWorkload \? "browser" : "proxy",\s*deploymentRoot,\s*browserWorkload \? browser : "",/,
   );
 });
 

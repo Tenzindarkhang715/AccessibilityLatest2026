@@ -55,8 +55,8 @@ test("fixing fixture markup eliminates the actual axe violation; zero findings i
 
 test("unsupported type, browser and WCAG are rejected before fixture loading or launch", async () => {
   const { scanner, events } = setup(async () => assert.fail("must not load"));
-  for (const input of [{ ...request, testType: "site" }, { ...request, browsers: ["firefox"] },
-    { ...request, browsers: ["Chrome 137 (Latest)"] }, { ...request, browsers: ["chromium", "webkit"] },
+  for (const input of [{ ...request, testType: "site" },
+    { ...request, browsers: ["Chrome 137 (Latest)"] }, { ...request, browsers: ["chromium", "firefox"] },
     { ...request, browsers: [] }, { ...request, wcagStandard: "wcag_2_2_aa" }]) {
     await assert.rejects(scan(scanner, input), { code: "UNSUPPORTED_SCAN_OPTIONS" });
   }

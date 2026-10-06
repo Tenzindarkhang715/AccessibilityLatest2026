@@ -44,6 +44,8 @@ export interface TestRun extends ScanRequest {
 }
 
 export interface Finding {
+  /** Executed browser for combined runs; absent on older findings. */
+  browser?: string;
   id: Id;
   testId: Id;
   pageUrl: string;
@@ -85,6 +87,7 @@ export interface ResultsQuery { limit?: number; cursor?: string }
 export interface ResultsResponse {
   testId: Id;
   status: TestStatus;
+  failure: TestRun["failure"];
   findings: FindingResponse[];
   nextCursor: string | null;
 }

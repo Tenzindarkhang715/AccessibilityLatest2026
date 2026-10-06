@@ -81,7 +81,9 @@ test("existing-record routes use only isolated fixtures, with no invented findin
     assert.equal((await request("/api/tests")).body.tests.length, 1);
     assert.equal((await request(`/api/tests/${id}`)).body.test.id, id);
     assert.deepEqual(await request(`/api/tests/${id}/results`), { status: 200,
-      body: { testId: id, status: "failed", findings: [], nextCursor: null } });
+      body: { testId: id, status: "failed",
+        failure: { code: "TEST_FIXTURE", message: "Isolated test fixture." },
+        findings: [], nextCursor: null } });
     assert.equal((await request(`/api/tests/${id}/results?cursor=invalid`)).status, 400);
     for (const size of [101, 1000, Number.MAX_SAFE_INTEGER]) {
       assert.equal((await request(`/api/tests/${id}/results?limit=${size}`)).status, 200);
@@ -113,7 +115,7 @@ test("run statuses, ordering, and independent re-test deletion use empty test fi
   await withServer(repository, async request => {
     for (const [index, status] of ["pending", "in_progress", "completed"].entries()) {
       assert.deepEqual((await request(`/api/tests/fixture-${index}/results`)).body,
-        { testId: `fixture-${index}`, status, findings: [], nextCursor: null });
+        { testId: `fixture-${index}`, status, failure: null, findings: [], nextCursor: null });
     }
     assert.equal((await request("/api/tests/fixture-0", "DELETE")).status, 204);
     assert.equal((await request("/api/tests/fixture-1")).status, 200);
@@ -187,4 +189,35 @@ test("scanner execution receives only the strict scan request fields", async () 
 
   const stored = await repository.get(submitted.test.id);
   assert.equal(stored.test.status, "completed");
+});
+
+test("Firefox UI selection reaches the scanner as firefox and retains its history label", async () => {
+  const repository = new MemoryTestRepository();
+  let receivedRequest;
+  let finished;
+  const scanned = new Promise(resolve => { finished = resolve; });
+  const scanner = {
+    async scan(request) {
+      receivedRequest = request;
+      finished();
+      return {
+        findings: [],
+        execution: {
+          browser: "firefox", browserVersion: "test",
+          engine: "axe-core", engineVersion: "test",
+          tags: [], evaluatedRuleIds: [], incompleteRuleIds: [], mode: "live",
+        },
+      };
+    },
+  };
+  const service = new TestService(repository, scanner);
+  const input = { ...specification, browsers: ["Firefox 139 (Latest)"] };
+  const submitted = await service.submit(input);
+  await scanned;
+  assert.deepEqual(receivedRequest, {
+    url: input.url, testType: input.testType,
+    browsers: ["firefox"], wcagStandard: input.wcagStandard,
+  });
+  assert.deepEqual((await repository.get(submitted.test.id)).test.browsers,
+    ["Firefox 139 (Latest)"]);
 });

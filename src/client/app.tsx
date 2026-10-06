@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import "./app.css";
-import { submitTest, getRecentTests, getResults, deleteTest, retestTest } from "./services/test-service";
+import { submitTest, getRecentTests, getResults, deleteTest, retestTest, getTestDetails } from "./services/test-service";
 import type { SubmitResult, HistoryRecord, TestResult } from "./services/test-service";
 
 const URL_PATTERN = /^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+/;
@@ -8,7 +8,6 @@ const URL_PATTERN = /^https?:\/\/[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-
 const BROWSER_OPTIONS = [
   { group: "Google Chrome", versions: ["Chrome 137 (Latest)", "Chrome 136", "Chrome 135"] },
   { group: "Mozilla Firefox", versions: ["Firefox 139 (Latest)", "Firefox 138", "Firefox 137"] },
-  { group: "Apple Safari", versions: ["Safari 18.5 (Latest)", "Safari 18.4", "Safari 18.3"] },
 ];
 
 const WCAG_OPTIONS = [
@@ -42,6 +41,8 @@ export default function App() {
   const [siteWcag, setSiteWcag] = useState("wcag_2_1_aa");
   const [pageWcag, setPageWcag] = useState("wcag_2_1_aa");
   const [loading, setLoading] = useState<"site" | "page" | null>(null);
+  const submissionLock = useRef(false);
+  const [historyAction, setHistoryAction] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<SubmitResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<AppView>("form");
@@ -90,6 +91,12 @@ export default function App() {
   };
 
   const handleSubmit = async (type: "site" | "page") => {
+    if (submissionLock.current) return;
+    const otherUrl = type === "site" ? pageUrl : siteUrl;
+    if (otherUrl.trim()) {
+      setError("You can use one scan at a time.");
+      return;
+    }
     const value = type === "site" ? siteUrl : pageUrl;
     const browsers = type === "site" ? siteBrowsers : pageBrowsers;
     const wcag = type === "site" ? siteWcag : pageWcag;
@@ -103,6 +110,7 @@ export default function App() {
       return;
     }
 
+    submissionLock.current = true;
     setLoading(type);
     setError(null);
 
@@ -131,6 +139,7 @@ export default function App() {
       const message = err instanceof Error ? err.message : "An error occurred";
       setError(message);
     } finally {
+      submissionLock.current = false;
       setLoading(null);
     }
   };
@@ -160,23 +169,43 @@ export default function App() {
   const handleDeleteTest = async (sysId: string) => {
     try {
       await deleteTest(sysId);
-      fetchHistory();
+      await fetchHistory();
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "Failed to delete test"
       );
+      throw err;
     }
   };
 
-  const handleRetestTest = async (record: HistoryRecord) => {
+  const openHistoryTest = async (record: HistoryRecord, retest: boolean) => {
+    if (submissionLock.current) return;
+    submissionLock.current = true;
+    setHistoryAction(`${retest ? "retest" : "view"}:${record.sys_id}`);
+    setError(null);
+    if (transitionTimer.current) clearTimeout(transitionTimer.current);
     try {
-      await retestTest(record);
-      fetchHistory();
+      const test = retest
+        ? await retestTest(record)
+        : await getTestDetails(record.sys_id);
+      setSubmitted(test);
+      setView("results");
+      void fetchHistory();
+      document.getElementById("main-content")?.focus();
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to re-test"
-      );
+      setError(err instanceof Error ? err.message : "Unable to open test.");
+    } finally {
+      submissionLock.current = false;
+      setHistoryAction(null);
     }
+  };
+
+  const handleRetestTest = (record: HistoryRecord) => {
+    void openHistoryTest(record, true);
+  };
+
+  const handleViewTest = (record: HistoryRecord) => {
+    void openHistoryTest(record, false);
   };
 
   return (
@@ -188,19 +217,28 @@ export default function App() {
         <Header />
       </header>
 
-      <main id="main-content">
+      <main id="main-content" tabIndex={-1}>
         {error && <ErrorBanner message={error} onDismiss={dismissError} />}
 
         {view === "results" && submitted ? (
           <ResultsPanel
+            key={submitted.runId}
             submittedUrl={submitted.value}
+            wcag={submitted.wcag}
+            selectedBrowsers={submitted.browsers}
             runId={submitted.runId}
+            onSettled={fetchHistory}
             onBack={handleReset}
           />
         ) : view === "success" && submitted ? (
           <SuccessView submitted={submitted} onReset={handleReset} onViewResults={handleViewResults} />
         ) : (
           <div className="cards-grid" aria-busy={loading !== null}>
+            {(siteUrl.trim() || pageUrl.trim()) && (
+              <p className="scan-mode-notice" role="status">
+                You can use one scan at a time. Clear the entered URL to switch between Site and Page.
+              </p>
+            )}
             <TestCard
               title="Site URL"
               description="Test accessibility across an entire website."
@@ -213,6 +251,7 @@ export default function App() {
               onBrowsersChange={setSiteBrowsers}
               wcagValue={siteWcag}
               onWcagChange={setSiteWcag}
+              disabled={Boolean(pageUrl.trim()) || loading !== null}
               loading={loading === "site"}
               onSubmit={() => handleSubmit("site")}
             />
@@ -228,13 +267,22 @@ export default function App() {
               onBrowsersChange={setPageBrowsers}
               wcagValue={pageWcag}
               onWcagChange={setPageWcag}
+              disabled={Boolean(siteUrl.trim()) || loading !== null}
               loading={loading === "page"}
               onSubmit={() => handleSubmit("page")}
             />
           </div>
         )}
 
-        <HistorySection records={history} loading={historyLoading} onDelete={handleDeleteTest} onRetest={handleRetestTest} />
+        <HistorySection
+          records={history}
+          loading={historyLoading}
+          onDelete={handleDeleteTest}
+          onRetest={handleRetestTest}
+          onView={handleViewTest}
+          actionPending={historyAction}
+          actionsDisabled={historyAction !== null || loading !== null}
+        />
       </main>
     </div>
   );
@@ -288,6 +336,7 @@ interface TestCardProps {
   wcagValue: string;
   onWcagChange: (v: string) => void;
   loading: boolean;
+  disabled: boolean;
   onSubmit: () => void;
 }
 
@@ -295,15 +344,18 @@ function TestCard(props: TestCardProps) {
   const {
     title, description, urlLabel, urlPlaceholder,
     urlValue, onUrlChange, urlError, selectedBrowsers, onBrowsersChange,
-    wcagValue, onWcagChange, loading, onSubmit,
+    wcagValue, onWcagChange, loading, disabled, onSubmit,
   } = props;
   const fieldId = title.toLowerCase().replace(/\s/g, "-");
-  const canSubmit = !!urlValue && selectedBrowsers.length > 0 && !loading;
+  const canSubmit = !!urlValue && selectedBrowsers.length > 0 && !loading && !disabled;
   const urlErrorId = `${fieldId}-url-error`;
 
   return (
-    <div className="view-container card-body">
-      <h2 className="card-title">{title}</h2>
+    <fieldset
+      className={`view-container card-body scan-card${disabled ? " scan-card--disabled" : ""}`}
+      disabled={disabled || loading}
+      aria-labelledby={`${fieldId}-title`}>
+      <h2 id={`${fieldId}-title`} className="card-title">{title}</h2>
       <p className="card-desc">{description}</p>
 
       {/* URL + WCAG inline row */}
@@ -366,7 +418,7 @@ function TestCard(props: TestCardProps) {
       >
         {loading ? "Submitting..." : "Submit"}
       </button>
-    </div>
+    </fieldset>
   );
 }
 
@@ -517,20 +569,30 @@ function SuccessView({
   );
 }
 
+import { filterSortResults, resultValue, type ResultSortKey } from "./services/results-view";
+
 /* ── Results Panel ── */
 function ResultsPanel({
   submittedUrl,
+  wcag,
+  selectedBrowsers,
   runId,
+  onSettled,
   onBack,
 }: {
   submittedUrl: string;
+  wcag: string;
+  selectedBrowsers: string[];
   runId?: string;
+  onSettled: () => Promise<void>;
   onBack: () => void;
 }) {
   const [results, setResults] = useState<TestResult[]>([]);
+  const [resultsMessage, setResultsMessage] = useState("");
+  const [completed, setCompleted] = useState(false);
   const [resultsLoading, setResultsLoading] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 40;
+  const maxRetries = 80;
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchResults = useCallback(async () => {
@@ -539,6 +601,10 @@ function ResultsPanel({
 
   useEffect(() => {
     let cancelled = false;
+    setResults([]);
+    setCompleted(false);
+    setResultsMessage("");
+    setRetryCount(0);
 
     const attempt = async (currentRetry: number) => {
       setResultsLoading(true);
@@ -547,9 +613,14 @@ function ResultsPanel({
         if (cancelled) return;
 
         if (data.status === "completed") {
+          void onSettled();
+          setCompleted(true);
           setResults(data.results);
+          setResultsMessage("Scan completed. No automated accessibility issues were found. This does not establish WCAG compliance.");
           setResultsLoading(false);
         } else if (data.status === "failed") {
+          void onSettled();
+          setResultsMessage(data.failure?.message || "The accessibility scan failed. Please try again.");
           setResults([]);
           setResultsLoading(false);
         } else if (currentRetry < maxRetries) {
@@ -558,6 +629,7 @@ function ResultsPanel({
             if (!cancelled) attempt(currentRetry + 1);
           }, 3000);
         } else {
+          setResultsMessage("The scan has not finished within the waiting period. Check Recent Tests for its status.");
           setResults([]);
           setResultsLoading(false);
         }
@@ -569,6 +641,7 @@ function ResultsPanel({
             if (!cancelled) attempt(currentRetry + 1);
           }, 3000);
         } else {
+          setResultsMessage("Unable to load scan results. Please try again.");
           setResults([]);
           setResultsLoading(false);
         }
@@ -581,11 +654,112 @@ function ResultsPanel({
       cancelled = true;
       if (retryTimer.current) clearTimeout(retryTimer.current);
     };
-  }, [fetchResults]);
+  }, [fetchResults, onSettled]);
+
+
+  const labels = [...new Set(results.map(row => row.browser || "Browser not recorded"))];
+  for (const selected of selectedBrowsers) {
+    const family = /^Chrome(?:\s|$)|^chromium$/i.test(selected) ? "Chromium"
+      : /^Firefox(?:\s|$)/i.test(selected) ? "Firefox" : "Browser not recorded";
+    if (!labels.some(label => label.startsWith(family))) {
+      labels.push(`${family} (version not recorded)`);
+    }
+  }
+  labels.sort((a, b) => a.localeCompare(b));
+  return (
+    <div className="browser-results-page">
+      <div className="results-header">
+        <div className="results-header__left">
+          <button className="results-back-btn" type="button" onClick={onBack}>← Back</button>
+          <div>
+            <h2 className="results-heading">Results</h2>
+            <span className="results-url">{submittedUrl}</span>
+          </div>
+        </div>
+      </div>
+      {resultsLoading ? (
+        <div className="results-loading" role="status">
+          <span className="results-spinner" /><p>Analyzing… results will appear shortly</p>
+        </div>
+      ) : !completed ? (
+        <div className="results-empty"><p role="status">{resultsMessage}</p></div>
+      ) : labels.map(browser => (
+        <BrowserResultsTable key={`${runId}-${browser}`} browser={browser}
+          wcag={wcag} runId={runId} submittedUrl={submittedUrl}
+          results={results.filter(row => (row.browser || "Browser not recorded") === browser)} />
+      ))}
+    </div>
+  );
+}
+
+function BrowserResultsTable({ results, browser, wcag, runId, submittedUrl }: {
+  results: TestResult[];
+  browser: string;
+  wcag: string;
+  runId?: string;
+  submittedUrl: string;
+}) {
+  const [search, setSearch] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("");
+  const [issueTypeFilter, setIssueTypeFilter] = useState("");
+  const [sortKey, setSortKey] = useState<ResultSortKey | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [runId, search, severityFilter, issueTypeFilter, sortKey, sortDirection]);
+  const resetView = () => {
+    setSearch(""); setSeverityFilter("");
+    setIssueTypeFilter(""); setSortKey(null); setSortDirection("asc"); setCurrentPage(1);
+  };
+  const visibleResults = filterSortResults(results, {
+    search, browser: "", severity: severityFilter,
+    issueType: issueTypeFilter, sortKey, direction: sortDirection,
+  });
+  const pageCount = Math.max(1, Math.ceil(visibleResults.length / pageSize));
+  const activePage = Math.min(currentPage, pageCount);
+  const pageStart = (activePage - 1) * pageSize;
+  const pageResults = visibleResults.slice(pageStart, pageStart + pageSize);
+  const pageNumbers: Array<number | string> = [];
+  const firstPageInGroup = Math.floor((activePage - 1) / 10) * 10 + 1;
+  const lastPageInGroup = Math.min(firstPageInGroup + 9, pageCount);
+  if (firstPageInGroup > 1) {
+    pageNumbers.push(1);
+    if (firstPageInGroup > 2) pageNumbers.push("earlier");
+  }
+  for (let page = firstPageInGroup; page <= lastPageInGroup; page++) {
+    pageNumbers.push(page);
+  }
+  if (lastPageInGroup < pageCount) {
+    if (lastPageInGroup < pageCount - 1) pageNumbers.push("later");
+    pageNumbers.push(pageCount);
+  }
+
+  const filterOptions = (key: ResultSortKey) =>
+    [...new Set(results.map(row => resultValue(row, key)))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const columns: Array<[ResultSortKey, string]> = [
+    ["test_url", "Test URL"], ["test_type", "Type of Test"],
+    ["issue", "Issue"],
+    ["issue_type", "Type of Issue"], ["severity", "Severity"],
+    ["screenshot", "Screenshot"], ["fix_reference", "How to Fix Reference"],
+  ];
+  const toggleSort = (key: ResultSortKey) => {
+    if (sortKey === key) setSortDirection(value => value === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDirection("asc"); }
+  };
+  const viewDescription = [
+    search.trim() ? `Search: ${search.trim()}` : "",
+    severityFilter ? `Severity: ${severityFilter}` : "",
+    issueTypeFilter ? `Issue type: ${issueTypeFilter}` : "",
+    sortKey ? `Sort: ${columns.find(([key]) => key === sortKey)?.[1]} (${sortDirection === "asc" ? "ascending" : "descending"})` : "",
+  ].filter(Boolean).join("; ") || "All findings; original order";
 
   /* -- Summary counts -- */
-  const totalIssues = results.length;
-  const countByType = (type: string) => results.filter((r) => r.issue_type === type).length;
+  const totalIssues = visibleResults.length;
+  const countByType = (type: string) => visibleResults.filter((r) => r.issue_type === type).length;
   const errorCount = countByType("error");
   const warningCount = countByType("warning");
   const noticeCount = countByType("notice");
@@ -603,7 +777,7 @@ function ResultsPanel({
       }
       return field;
     };
-    const rows = results.map((r) =>
+    const rows = visibleResults.map((r) =>
       [
         escapeField(r.test_url || ""),
         escapeField(formatTestType(r.test_type)),
@@ -614,12 +788,18 @@ function ResultsPanel({
         escapeField(r.screenshot || ""),
       ].join(","),
     );
-    const csv = [header, ...rows].join("\n");
+    const metadata = [
+      ["WCAG standard", wcagLabel(wcag)].map(escapeField).join(","),
+      ["Browser", browser].map(escapeField).join(","),
+      ["View", viewDescription].map(escapeField).join(","),
+      "",
+    ];
+    const csv = [...metadata, header, ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "accessibility-results.csv";
+    link.download = `accessibility-results-${browser.replace(/[^a-z0-9]+/gi, "-")}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -628,7 +808,7 @@ function ResultsPanel({
 
   /* -- Export PDF (print-friendly) -- */
   const exportPdf = () => {
-    const tableRows = results
+    const tableRows = visibleResults
       .map(
         (r) =>
           `<tr>
@@ -661,9 +841,10 @@ function ResultsPanel({
   </style>
 </head>
 <body>
-  <h1>Accessibility Test Results</h1>
+  <h1>${escapeHtml(wcagLabel(wcag))} / ${escapeHtml(browser)}</h1>
   <p>${escapeHtml(submittedUrl)}</p>
-  <div class="summary">Total Issues: ${totalIssues} | Errors: ${errorCount} | Warnings: ${warningCount} | Notices: ${noticeCount}</div>
+  <div class="summary">Showing ${totalIssues} of ${results.length} findings</div>
+  <p>${escapeHtml(viewDescription)}</p>
   <table>
     <thead>
       <tr>
@@ -691,50 +872,46 @@ function ResultsPanel({
   };
 
   return (
-    <div className="results-panel">
-      {/* Header */}
+    <section className="results-panel browser-results-section"
+      aria-label={`${wcagLabel(wcag)} / ${browser}`}>
       <div className="results-header">
-        <div className="results-header__left">
-          <button className="results-back-btn" onClick={onBack} type="button" aria-label="Back to form">
-            ← Back
-          </button>
-          <div className="results-header__title">
-            <h2 className="results-heading">Results</h2>
-            <span className="results-url" title={submittedUrl}>{submittedUrl}</span>
-          </div>
-        </div>
+        <h3 className="results-heading">{wcagLabel(wcag)} / {browser}</h3>
         <div className="results-header__actions">
-          <button className="export-btn" onClick={exportCsv} disabled={results.length === 0} type="button">
-            Export CSV
-          </button>
-          <button className="export-btn" onClick={exportPdf} disabled={results.length === 0} type="button">
-            Export PDF
-          </button>
+          <button className="export-btn" type="button" onClick={exportCsv}
+            disabled={!visibleResults.length}
+            aria-label={`Export ${browser} CSV`}>Export CSV</button>
+          <button className="export-btn" type="button" onClick={exportPdf}
+            disabled={!visibleResults.length}
+            aria-label={`Export ${browser} PDF`}>Export PDF</button>
         </div>
       </div>
-
-      {/* Loading / Analyzing */}
-      {resultsLoading ? (
-        <div className="results-loading" aria-live="polite" role="status">
-          <span className="results-spinner" />
-          <p className="results-loading-text">
-            Analyzing… results will appear shortly
-            {retryCount > 0 && <span className="results-retry-count"> (attempt {retryCount + 1}/{maxRetries + 1})</span>}
-          </p>
-        </div>
-      ) : results.length === 0 ? (
-        <div className="results-empty">
-          <p>No results found for this URL. The test may still be processing.</p>
-          <button className="submit-btn submit-btn--active" onClick={onBack} type="button">
-            Go Back
-          </button>
-        </div>
-      ) : (
-        <>
+          <div className="results-controls" role="group" aria-label={`Filter ${browser} results`}>
+            <label className="results-control results-control--search">
+              Search findings
+              <input type="search" value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="URL, issue, or reference" />
+            </label>
+            <label className="results-control">
+              Severity
+              <select value={severityFilter} onChange={event => setSeverityFilter(event.target.value)}>
+                <option value="">All severities</option>
+                {filterOptions("severity").map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="results-control">
+              Issue type
+              <select value={issueTypeFilter} onChange={event => setIssueTypeFilter(event.target.value)}>
+                <option value="">All issue types</option>
+                {filterOptions("issue_type").map(value => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <button type="button" className="results-reset" onClick={resetView}>Reset view</button>
+          </div>
           {/* Summary Bar */}
           <div className="results-summary">
             <div className="results-summary__total">
-              <strong>{totalIssues}</strong> total issue{totalIssues !== 1 ? "s" : ""} found
+              <span role="status" aria-live="polite">Showing <strong>{totalIssues}</strong> of {results.length} findings</span>
             </div>
             <div className="results-summary__breakdown">
               {errorCount > 0 && <span className="summary-chip summary-chip--error">{errorCount} error{errorCount !== 1 ? "s" : ""}</span>}
@@ -752,17 +929,23 @@ function ResultsPanel({
             <table className="results-table">
               <thead>
                 <tr>
-                  <th scope="col">Test URL</th>
-                  <th scope="col">Type of Test</th>
-                  <th scope="col">Issue</th>
-                  <th scope="col">Type of Issue</th>
-                  <th scope="col">Severity</th>
-                  <th scope="col">Screenshot</th>
-                  <th scope="col">How to Fix Reference</th>
+                  {columns.map(([key, label]) => (
+                    <th key={key} scope="col"
+                      aria-sort={sortKey === key ? (sortDirection === "asc" ? "ascending" : "descending") : undefined}>
+                      <button type="button" className="results-sort"
+                        onClick={() => toggleSort(key)}
+                        aria-label={`Sort by ${label}${sortKey === key ? `; currently ${sortDirection === "asc" ? "ascending" : "descending"}` : ""}`}>
+                        {label} <span aria-hidden="true">{sortKey === key ? (sortDirection === "asc" ? "↑" : "↓") : "↕"}</span>
+                      </button>
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {results.map((r) => (
+                {visibleResults.length === 0 && (
+                  <tr><td colSpan={7}>{results.length ? "No findings match these filters. Use Reset view to show all findings." : "Scan completed. No automated accessibility issues were found. This does not establish WCAG compliance."}</td></tr>
+                )}
+                {pageResults.map((r) => (
                   <tr key={r.sys_id}>
                     <td className="results-url-cell" title={r.test_url}>{r.test_url}</td>
                     <td>{formatTestType(r.test_type)}</td>
@@ -813,9 +996,35 @@ function ResultsPanel({
               </tbody>
             </table>
           </div>
-        </>
-      )}
-    </div>
+          <div className="results-pagination">
+            <span role="status" aria-live="polite">
+              {visibleResults.length === 0
+                ? "0 matching findings"
+                : `Rows ${pageStart + 1}–${pageStart + pageResults.length} of ${visibleResults.length} matching findings`}
+            </span>
+            {pageCount > 1 && (
+              <nav aria-label={`${browser} results pages`}>
+                <button type="button" disabled={activePage === 1}
+                  onClick={() => setCurrentPage(activePage - 1)}
+                  aria-label="Previous results page">‹ Previous</button>
+                {pageNumbers.map(page => typeof page === "number" ? (
+                  <button key={page} type="button"
+                    aria-label={`Results page ${page}`}
+                    aria-current={activePage === page ? "page" : undefined}
+                    onClick={() => setCurrentPage(page)}>
+                    {page}
+                  </button>
+                ) : (
+                  <span key={page} className="results-page-ellipsis" aria-hidden="true">…</span>
+                ))}
+                <button type="button" disabled={activePage === pageCount}
+                  onClick={() => setCurrentPage(activePage + 1)}
+                  aria-label="Next results page">Next ›</button>
+              </nav>
+            )}
+          </div>
+
+    </section>
   );
 }
 
@@ -842,12 +1051,56 @@ function HistorySection({
   loading,
   onDelete,
   onRetest,
+  onView,
+  actionPending,
+  actionsDisabled,
 }: {
   records: HistoryRecord[];
   loading: boolean;
-  onDelete: (sysId: string) => void;
+  onDelete: (sysId: string) => Promise<void>;
   onRetest: (record: HistoryRecord) => void;
+  onView: (record: HistoryRecord) => void;
+  actionPending: string | null;
+  actionsDisabled: boolean;
 }) {
+  const [deleteTarget, setDeleteTarget] = useState<HistoryRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const deleteLock = useRef(false);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || !deleteTarget) return;
+    if (!dialog.open) dialog.showModal();
+    cancelRef.current?.focus();
+  }, [deleteTarget]);
+
+  const closeDelete = () => {
+    if (deleteLock.current) return;
+    dialogRef.current?.close();
+    setDeleteTarget(null);
+    setDeleteError("");
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleteLock.current) return;
+    deleteLock.current = true;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await onDelete(deleteTarget.sys_id);
+      dialogRef.current?.close();
+      setDeleteTarget(null);
+    } catch (error: unknown) {
+      setDeleteError(error instanceof Error ? error.message : "Unable to delete this test. Please try again.");
+    } finally {
+      deleteLock.current = false;
+      setDeleting(false);
+    }
+  };
+
   const statusLabel = (s: string) => s.replace(/_/g, " ");
   const statusClass = (s: string) => {
     const key = s.toLowerCase();
@@ -860,9 +1113,45 @@ function HistorySection({
 
   return (
     <section className="history-section" aria-label="Recent tests">
+      <dialog
+        ref={dialogRef}
+        className="delete-confirm-dialog"
+        aria-labelledby="delete-confirm-title"
+        aria-describedby="delete-confirm-description"
+        onCancel={event => {
+          event.preventDefault();
+          closeDelete();
+        }}
+      >
+        <h2 id="delete-confirm-title">Delete this test?</h2>
+        <p id="delete-confirm-description">
+          This will permanently delete this test and its scan results.
+        </p>
+        <p className="delete-confirm-url">{deleteTarget?.url}</p>
+        {deleteError && <p role="alert">{deleteError}</p>}
+        <div className="delete-confirm-actions" aria-busy={deleting}>
+          <button ref={cancelRef} type="button" onClick={closeDelete} disabled={deleting}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="delete-confirm-danger"
+            onClick={() => { void confirmDelete(); }}
+            disabled={deleting}
+          >
+            {deleting ? "Deleting…" : "Delete test"}
+          </button>
+        </div>
+      </dialog>
       <div className="history-card">
+        {actionPending && (
+          <p role="status" aria-live="polite">
+            {actionPending.startsWith("retest:") ? "Starting scan…" : "Opening test results…"}
+          </p>
+        )}
         <div className="history-header">
           <h2 className="history-title">Recent Tests</h2>
+          <span className="history-limit-note">Showing the 10 most recent tests.</span>
           {loading && <span className="history-spinner" aria-label="Loading history" role="status" />}
         </div>
 
@@ -894,8 +1183,18 @@ function HistorySection({
                   <td>{r.sys_created_on}</td>
                   <td className="history-actions-cell">
                     <button
+                      className="history-action-btn history-action-btn--view"
+                      type="button"
+                      onClick={() => onView(r)}
+                      disabled={actionsDisabled || deleting}
+                      aria-label={`View results for ${r.url}`}
+                    >
+                      View results
+                    </button>
+                    <button
                       className="history-action-btn history-action-btn--retest"
                       onClick={() => onRetest(r)}
+                      disabled={actionsDisabled || deleting}
                       type="button"
                       aria-label={`Re-test ${r.url}`}
                       title="Re-Test"
@@ -904,7 +1203,8 @@ function HistorySection({
                     </button>
                     <button
                       className="history-action-btn history-action-btn--delete"
-                      onClick={() => onDelete(r.sys_id)}
+                      onClick={() => { setDeleteError(""); setDeleteTarget(r); }}
+                      disabled={actionsDisabled || deleting}
                       type="button"
                       aria-label={`Delete test ${r.url}`}
                       title="Delete"

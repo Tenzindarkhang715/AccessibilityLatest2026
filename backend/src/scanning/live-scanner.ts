@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { chromium, type Browser, type BrowserServer } from "playwright";
+import { chromium, firefox, type Browser, type BrowserServer } from "playwright";
 import { AxeBuilder } from "@axe-core/playwright";
 
 import {
@@ -15,6 +15,7 @@ import {
   type TargetPolicyOptions,
 } from "../security/target-policy.js";
 import { mapAxeFindings } from "./axe-findings.js";
+import { navigateWithNetworkRetry } from "./navigation.js";
 import { WCAG_TAGS } from "./playwright-scanner.js";
 
 export interface LiveProxyConfiguration {
@@ -88,7 +89,7 @@ export function createLiveScanner(options: {
         (request.testType !== "page" && request.testType !== "site") ||
         request.wcagStandard !== "wcag_2_1_aa" ||
         request.browsers.length !== 1 ||
-        request.browsers[0] !== "chromium"
+        !["chromium", "firefox"].includes(request.browsers[0])
       ) {
         throw new ScannerError("UNSUPPORTED_SCAN_OPTIONS");
       }
@@ -149,19 +150,24 @@ export function createLiveScanner(options: {
 
         check();
 
-        server = await chromium.launchServer({
+        const browserType = request.browsers[0] === "firefox" ? firefox : chromium;
+        server = await browserType.launchServer({
           headless: true,
           host: "127.0.0.1",
-          executablePath: options.browserExecutablePath,
+          ...(options.browserExecutablePath
+            ? {
+                executablePath: options.browserExecutablePath,
+                ...(browserType === chromium ? { chromiumSandbox: true } : {}),
+              }
+            : {}),
           timeout: Math.max(1, deadline - Date.now()),
-          chromiumSandbox: true,
-          args: ["--disable-background-networking"],
+          ...(browserType === chromium ? { args: ["--disable-background-networking"] } : {}),
         });
 
         check();
 
         browser = await bounded(
-          chromium.connect(server.wsEndpoint(), {
+          browserType.connect(server.wsEndpoint(), {
             timeout: documentTimeoutMs,
           }),
         );
@@ -186,21 +192,31 @@ export function createLiveScanner(options: {
           context.routeWebSocket("**/*", socket => socket.close()),
         );
 
-        const page = await bounded(context.newPage());
+        const createPage = async () => {
+          const page = await bounded(context.newPage());
 
-        page.on("close", () => observe("page-closed"));
+          page.on("close", () => observe("page-closed"));
+          page.on("requestfailed", failed => {
+            if (!failed.isNavigationRequest() || failed.frame() !== page.mainFrame()) return;
+            const code = failed.failure()?.errorText.match(/net::[A-Z_]+/)?.[0] ?? "UNKNOWN";
+            console.error(`[scanner-navigation-failure] ${code}`);
+          });
 
-        page.on("dialog", dialog => {
-          void dialog.dismiss().catch(() => {});
-        });
 
-        page.on("popup", popup => {
-          void popup.close().catch(() => {});
-        });
+          page.on("dialog", dialog => {
+            void dialog.dismiss().catch(() => {});
+          });
 
-        page.on("download", download => {
-          void download.cancel().catch(() => {});
-        });
+          page.on("popup", popup => {
+            void popup.close().catch(() => {});
+          });
+
+          page.on("download", download => {
+            void download.cancel().catch(() => {});
+          });
+          return page;
+        };
+        let page = await createPage();
 
         check();
 
@@ -223,10 +239,26 @@ export function createLiveScanner(options: {
           const current = queue.shift()!;
           const admitted = policy.admit(current.url, signal);
           check();
-          await bounded(page.goto(admitted.href, {
-            waitUntil: "domcontentloaded",
-            timeout: Math.min(documentTimeoutMs, Math.max(1, deadline - Date.now())),
-          }));
+          await navigateWithNetworkRetry({
+            timeoutMs: Math.min(documentTimeoutMs, Math.max(1, deadline - Date.now())),
+            check,
+            navigate: async (timeout, attempt) => {
+              const navigationDeadline = performance.now() + timeout;
+              if (attempt > 0) {
+                await bounded(page.close());
+                check();
+                page = await createPage();
+                check();
+              }
+              policy.admit(current.url, signal);
+              const remaining = navigationDeadline - performance.now();
+              if (remaining <= 0) throw new Error("Navigation timeout exhausted.");
+              return bounded(page.goto(admitted.href, {
+                waitUntil: "domcontentloaded",
+                timeout: remaining,
+              }));
+            },
+          });
           check();
 
           const finalUrl = new URL(page.url());
@@ -270,7 +302,7 @@ export function createLiveScanner(options: {
         return {
           findings,
           execution: {
-            browser: "chromium",
+            browser: request.browsers[0] === "firefox" ? "firefox" : "chromium",
             browserVersion: browser.version(),
             engine,
             engineVersion,

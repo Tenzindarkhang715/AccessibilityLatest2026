@@ -59,11 +59,12 @@ and production scanner security boundary.
 │              PRODUCTION LINUX BOUNDARY                      │
 │                                                             │
 │   Browser Namespace                Proxy Namespace           │
-│   ┌──────────────────┐           ┌──────────────────────┐    │
-│   │ Chromium         │           │ Controlled network   │    │
-│   │ Playwright       │──────────►│ proxy / DNS / egress │    │
-│   │ axe-core         │           │ policy               │    │
-│   └──────────────────┘           └──────────┬───────────┘    │
+│   ┌──────────────────────┐       ┌──────────────────────┐    │
+│   │ Chromium / Firefox   │       │ Controlled network   │    │
+│   │ Playwright + axe     │──────►│ proxy / DNS / egress │    │
+│   │ Browser-specific     │       │ policy               │    │
+│   │ runtime + sandbox    │       └──────────┬───────────┘    │
+│   └──────────────────────┘                  │                │
 │                                             │                │
 │   Security Controls:                        │                │
 │   • Linux namespaces                        │                │
@@ -89,7 +90,7 @@ and production scanner security boundary.
 Target Website
       │
       ▼
-Chromium + Playwright + axe
+Chromium or Firefox + Playwright + axe
       │
       ▼
 Production Linux Boundary
@@ -167,8 +168,10 @@ The browser workload must not receive unrestricted direct Internet access.
 
 The production architecture is designed around:
 
-- Chromium sandbox enabled
+- Chromium and Firefox browser sandboxes remain enabled
 - No `--no-sandbox`
+- Dedicated immutable browser runtime paths
+- AppArmor user-namespace profiles for Chromium and Firefox
 - Linux namespace isolation
 - cgroup resource isolation
 - Privilege separation and dropping
@@ -184,18 +187,33 @@ The production architecture is designed around:
 
 ## Current Implementation Status
 
-The standalone application and production scanner boundary foundation are
-part of the current `main` baseline.
+The standalone application and production scanner boundary are implemented
+in the current development architecture.
 
-The production scanner execution path is still being completed.
+The validation environment has completed live end-to-end scanner checks for
+both Chromium and Firefox through the scanner supervisor. The validated path
+includes browser-specific executable selection, Playwright browser launch,
+axe-core accessibility evaluation, controlled proxy-based egress, Linux
+workload isolation, and browser lifecycle cleanup.
 
-Remaining production work includes:
+The validated browser runtimes are pinned to immutable runtime paths:
 
-- Final cgroup/workload lifecycle
-- Workload UID separation
-- Production browser/proxy process launch
-- Readiness lifecycle
-- Scanner execution lifecycle
-- Linux production end-to-end validation
+- Chromium: `/opt/scanner-runtime/chromium-1243/chrome-linux-arm64/chrome`
+- Firefox: `/opt/scanner-runtime/firefox-1543/firefox/firefox`
 
-This section should be updated as those milestones are completed.
+Ubuntu AppArmor user-namespace profiles are used for the browser sandboxes.
+The production workload selects the dedicated profile based on the requested
+browser: Chromium uses `accessibility-scanner-chrome`, while Firefox uses
+`accessibility-scanner-firefox`. Unknown browser profile selections fail
+closed before the browser process is launched.
+
+The validation service continues to be treated as the controlled Linux
+validation environment; final production hosting and deployment remain
+separate concerns.
+
+This section should be updated as the production deployment architecture
+evolves.
+
+## Scan Lifecycle and Results
+
+See [Scan Lifecycle and Results](05-scan-lifecycle-and-results.md) for scan execution, browser tables, exports, pagination, and history actions.
