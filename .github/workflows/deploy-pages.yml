@@ -57,3 +57,12 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        
+      - name: Trigger automation smoke tests
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMATION_TRIGGER_TOKEN }}
+        run: |
+          gh workflow run playwright.yml \
+            --repo Tenzindarkhang715/AccessibilityLatest2026-Automation \
+            --ref main \
+            -f suite=smoke
